@@ -26,6 +26,7 @@ while [ $# -gt 0 ]; do
 done
 
 log() { echo "[fork-sync] $*"; }
+logfile() { echo "/tmp/fork-sync-$(basename "$FORK_REPO")-$1.log"; }
 
 # Preflight.
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then log "working tree has changes; commit or stash first"; exit 1; fi
@@ -75,12 +76,12 @@ for step in build-app lint test; do
   # hung before establishing connection"); regenerate before each step.
   rm -f .build/.tuist-generated-stamps/development
   log "make $step"
-  make "$step" > "/tmp/fork-sync-$step.log" 2>&1 || { log "make $step failed; see /tmp/fork-sync-$step.log"; exit 3; }
+  make "$step" > "$(logfile "$step")" 2>&1 || { log "make $step failed; see $(logfile "$step")"; exit 3; }
 done
 
 if [ $install -eq 1 ]; then
   log "installing to /Applications"
-  make install-dev-build > /tmp/fork-sync-install.log 2>&1 || { log "install failed; see /tmp/fork-sync-install.log"; exit 3; }
+  make install-dev-build > "$(logfile install)" 2>&1 || { log "install failed; see $(logfile install)"; exit 3; }
 fi
 if [ $push -eq 1 ]; then
   git push -q -f origin "${branches[@]}" personal && git push -q origin "refs/tags/$backup" 2>/dev/null
