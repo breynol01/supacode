@@ -513,6 +513,7 @@ private struct TrailingView: View {
     let prText = display.pullRequestBadgeStyle?.text
     let reviewDecision = display.pullRequest?.reviewStatus
     let agents = store.agents
+    let backgroundCommands = store.agentSnapshot.backgroundCommands
     let scriptColors = store.runningScripts.map(\.tint)
     let showsNotificationIndicator = store.hasUnseenNotifications
     let showsDormantIndicator = store.allTabsDormant
@@ -548,6 +549,10 @@ private struct TrailingView: View {
           RunningAgentsBadgeContent(agents: agents)
             .equatable()
         }
+        if !backgroundCommands.isEmpty {
+          SidebarBackgroundWorkIndicator(commands: backgroundCommands)
+            .equatable()
+        }
         if hasStatus {
           StatusIndicator(
             runningScriptColors: scriptColors,
@@ -568,6 +573,31 @@ private struct TrailingView: View {
         .opacity(hasHint ? 1 : 0)
     }
     .animation(.easeInOut(duration: 0.15), value: hasHint)
+  }
+}
+
+/// Marker for an idle agent that is still waiting on work it started (a
+/// background command, a dispatched run). The tooltip names the commands.
+private struct SidebarBackgroundWorkIndicator: View, Equatable {
+  let commands: [String]
+
+  var body: some View {
+    Image(systemName: "hourglass")
+      .imageScale(.small)
+      .appFont(.subheadline, weight: .semibold)
+      .foregroundStyle(.secondary)
+      .symbolEffect(.pulse, options: .repeating)
+      .help(Self.helpText(commands))
+      .accessibilityLabel("Waiting on background work")
+      .transition(.blurReplace)
+  }
+
+  static func helpText(_ commands: [String]) -> String {
+    let lines = commands.prefix(5).map { command in
+      command.count > 120 ? String(command.prefix(117)) + "…" : command
+    }
+    let more = commands.count > 5 ? "\n+\(commands.count - 5) more" : ""
+    return "Waiting on background work:\n" + lines.joined(separator: "\n") + more
   }
 }
 
