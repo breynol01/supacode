@@ -63,6 +63,11 @@ nonisolated struct TerminalClient: Sendable {
       focusing: Bool = true,
       anchor: UUID? = nil
     )
+    /// Opens a browser tab; a nil URL opens a blank page.
+    case createBrowserTab(Worktree, url: URL?, id: UUID? = nil, focusing: Bool = true, anchor: UUID? = nil)
+    /// Splits a pane, opening a browser tab in the new pane.
+    case splitPaneWithBrowser(
+      Worktree, paneToken: UUID?, direction: SplitDirection, url: URL?, id: UUID? = nil, focusing: Bool = true)
     /// Runs the resolved open-file script for a File Explorer file. `input` is the ready shell
     /// command; the manager picks placement (tab in the zoomed/top-right pane, or a split).
     case openFileWithScript(Worktree, input: String)
