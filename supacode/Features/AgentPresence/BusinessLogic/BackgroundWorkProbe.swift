@@ -67,7 +67,7 @@ nonisolated enum BackgroundWorkProbe {
     while args.count < argc, index < size {
       let start = index
       while index < size, buffer[index] != 0 { index += 1 }
-      args.append(String(decoding: buffer[start..<index], as: UTF8.self))
+      args.append(String(bytes: buffer[start..<index], encoding: .utf8) ?? "")
       index += 1
     }
     return args
