@@ -73,25 +73,18 @@ private enum SparkleUpdater {
 
 nonisolated extension UpdaterClient: DependencyKey {
   static let liveValue = UpdaterClient(
-    configure: { checks, downloads, checkInBackground in
+    // Personal fork: an upstream release would replace this build, so updates stay off.
+    configure: { _, _, _ in
       let updater = SparkleUpdater.updater
-      updater.automaticallyChecksForUpdates = checks
-      updater.automaticallyDownloadsUpdates = downloads
-      if checkInBackground, checks {
-        updater.checkForUpdatesInBackground()
-      }
+      updater.automaticallyChecksForUpdates = false
+      updater.automaticallyDownloadsUpdates = false
     },
     setUpdateChannel: { channel in
       let updater = SparkleUpdater.updater
       SparkleUpdater.delegate.updateChannel = channel
       updater.updateCheckInterval = channel == .tip ? 43200 : 259200
-      if updater.automaticallyChecksForUpdates {
-        updater.checkForUpdatesInBackground()
-      }
     },
-    checkForUpdates: {
-      SparkleUpdater.updater.checkForUpdates()
-    }
+    checkForUpdates: {}
   )
 
   static let testValue = UpdaterClient(
