@@ -58,6 +58,8 @@ struct AgentPresenceFeature {
     var agents: [AgentInstance] = []
     var isWorking = false
     var hasError = false
+    /// Commands an idle agent left running; empty while any agent is working.
+    var backgroundCommands: [String] = []
   }
 
   // `nonisolated` so `stageRestore` (off-main at launch) can use Hashable.
@@ -116,6 +118,7 @@ struct AgentPresenceFeature {
     case programStatusPromptReturned(surfaceID: UUID)
     case livenessSweepTick
     case livenessSweepResult(snapshot: [PresenceKey: Set<pid_t>], alive: [PresenceKey: Set<pid_t>])
+    case backgroundWorkResult([UUID: [String]])
     case start
     case stop
     case surfaceClosed(UUID)
@@ -144,6 +147,9 @@ struct AgentPresenceFeature {
     /// Per-surface agent presence. A surface can host multiple agents (rare,
     /// but possible if e.g. Claude spawns Codex). Order not guaranteed; sort before display.
     var bySurface: [UUID: Set<SkillAgent>] = [:]
+    /// Per-surface commands an idle agent left running (see
+    /// `BackgroundWorkProbe`); refreshed on the liveness sweep.
+    var backgroundWork: [UUID: [String]] = [:]
   }
 
   /// Period between liveness sweeps. Cost scales with active sessions, not
@@ -175,12 +181,32 @@ struct AgentPresenceFeature {
         // Run `kill(2)` off the main actor; the reducer body is shared with action-burst paths.
         let snapshot: [PresenceKey: Set<pid_t>] = state.records
           .compactMapValues { record in record.pids.isEmpty ? nil : record.pids }
-        guard !snapshot.isEmpty else { return .none }
+        guard !snapshot.isEmpty else {
+          return state.backgroundWork.isEmpty ? .none : .send(.backgroundWorkResult([:]))
+        }
+        var idlePids: [UUID: Set<pid_t>] = [:]
+        for (key, record) in state.records where record.activity == .idle && !record.pids.isEmpty {
+          idlePids[key.surfaceID, default: []].formUnion(record.pids)
+        }
         return .run { send in
           let alive = Self.liveness(forSnapshot: snapshot)
-          guard !alive.isEmpty else { return }
-          await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+          if !alive.isEmpty {
+            await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
+          }
+          let work = idlePids.compactMapValues { pids in
+            let commands = BackgroundWorkProbe.commands(forAgentPids: pids)
+            return commands.isEmpty ? nil : commands
+          }
+          await send(.backgroundWorkResult(work))
         }
+
+      case .backgroundWorkResult(let work):
+        guard work != state.backgroundWork else { return .none }
+        let changed = Set(work.keys).union(state.backgroundWork.keys).filter {
+          work[$0] != state.backgroundWork[$0]
+        }
+        state.backgroundWork = work
+        return Self.surfacesChangedEffect(changed)
 
       case .livenessSweepResult(let snapshot, let alive):
         let changed = Self.applyLiveness(delta: alive, snapshot: snapshot, into: &state)
@@ -408,7 +434,10 @@ struct AgentPresenceFeature {
   }
 
   private static func drop(surfaces: Set<UUID>, from state: inout State) {
-    for id in surfaces { state.bySurface.removeValue(forKey: id) }
+    for id in surfaces {
+      state.bySurface.removeValue(forKey: id)
+      state.backgroundWork.removeValue(forKey: id)
+    }
     state.records = state.records.filter { !surfaces.contains($0.key.surfaceID) }
   }
 
@@ -639,10 +668,13 @@ extension AgentPresenceFeature.State {
       if record.activity.isWorking { isWorking = true }
       if record.activity == .error, badgesEnabled { hasError = true }
     }
+    let backgroundCommands =
+      isWorking ? [] : surfaceSet.sorted { $0.uuidString < $1.uuidString }.flatMap { backgroundWork[$0] ?? [] }
     return AgentPresenceFeature.RowSnapshot(
       agents: agents(across: surfaceSet, badgesEnabled: badgesEnabled),
       isWorking: isWorking,
-      hasError: hasError
+      hasError: hasError,
+      backgroundCommands: backgroundCommands
     )
   }
 
