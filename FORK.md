@@ -1,0 +1,47 @@
+# Fork maintenance (breynol01/supacode)
+
+A personal fork of [supabitapp/supacode](https://github.com/supabitapp/supacode) (FSL-1.1, internal use).
+Upstream's `AGENTS.md` and `CLAUDE.md` describe the codebase and stay untouched; this file covers the fork only.
+
+## Policy
+- Follow **upstream releases only**: `v*` tags. Never sync to `tip` or `main`.
+- Build on Supacode's own mechanisms (OSC 7501 program status, `AgentPresenceFeature`, the sidebar row snapshot, the kind-agnostic `TabContent` layer) before inventing a parallel path.
+- Each fork change lives on its own `fork/*` branch, small enough to offer upstream as a PR.
+
+## Branches
+| Branch | Purpose |
+|---|---|
+| `main` | Mirror of `upstream/main`. Never commit here. |
+| `fork/*` | One fork change each, rebased onto the current release tag. Listed in `.fork/branches.txt`, merged in that order. |
+| `personal` | Build/install branch. **Regenerated** on every sync (release tag + every `fork/*`). Never edit it directly. |
+| `backup/personal-<date>` (tag) | Snapshot taken before each sync. |
+
+## Fork changes
+- `fork/tooling`: this file plus `.fork/`.
+- `fork/no-auto-update`: Sparkle never checks or installs, so an upstream release can't replace the fork build.
+- `fork/browser-pane`: a `browser` `ContentKind` (`supacode/Features/Browser/BrowserContent.swift`). WKWebView on the default persistent data store, so one sign-in is shared across worktrees. Adds `--url` on `supacode tab new` / `pane split`, the `url=` deeplink param, and "Open Browser in Split" (⌘⇧L). It plugs into upstream's `TabContent` / `TabContentToolbar` / `TabChrome` protocols. Upstream wants a browser too (issue #500); prefer their design if they ship one.
+- `fork/background-work`: a sidebar hourglass, and the row counts as Active, when an idle Claude session still has background shell commands running.
+  - `BackgroundWorkProbe` finds `claude` processes by `SUPACODE_SURFACE_ID` and looks for children carrying Claude Code's `~/.claude/shell-snapshots/` wrapper.
+  - The probe is injected as `BackgroundWorkClient`; its `testValue` is empty, because the test host is the live app.
+  - Known gap: daemon-hosted Claude sessions (`claude daemon` / `bg-spare`) aren't under the tab and their surface ID goes stale. The fallback idea is `~/.claude/sessions/*.json`.
+
+## Syncing to a new upstream release
+- Automatic: a launchd agent (`com.breynol01.supacode-fork-check`, Mondays 09:00) runs `.fork/check.sh`. When a new `v*` tag exists, it starts headless Claude with the `supacode-fork-sync` skill and posts a macOS notification with the result. The log is at `~/Library/Logs/supacode-fork-sync.log`.
+- Manual: `bash .fork/sync.sh` (`--target <ref>`, `--rebuild`, `--no-install`, `--no-push`).
+- Exit codes:
+  - 0: synced and installed, or already up to date.
+  - 2: rebase conflict. The rebase is left paused.
+  - 3: build, lint or test failure.
+  - 1: preflight problem.
+- `git rerere` is on, so a conflict resolved once is re-applied automatically next time.
+
+## Resolving conflicts
+- Keep upstream's behavior and re-apply the fork's intent on top of it (see "Fork changes").
+- If upstream now does what a fork change did, shrink or drop that branch, and remove it from `.fork/branches.txt` when it's empty.
+- After `git rebase --continue`, re-run `bash .fork/sync.sh`. Finished branches rebase as no-ops.
+- Build gotcha: after switching branches, `rm .build/.tuist-generated-stamps/development`. The sync script does this for you. A stale generated project shows up as "test runner hung before establishing connection".
+
+## Starting new fork work
+1. `git checkout -b fork/<name> $(git tag -l 'v*' --sort=-v:refname | head -1)` (or the current base).
+2. Commit, and add the branch to `.fork/branches.txt` (on `fork/tooling`).
+3. `bash .fork/sync.sh --rebuild` to regenerate `personal`, build, test and install.
