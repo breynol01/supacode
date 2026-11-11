@@ -188,7 +188,7 @@ struct AgentPresenceFeature {
         for (key, record) in state.records where record.activity == .idle && !record.pids.isEmpty {
           idlePids[key.surfaceID, default: []].formUnion(record.pids)
         }
-        return .run { send in
+        return .run { [idlePids] send in
           let alive = Self.liveness(forSnapshot: snapshot)
           if !alive.isEmpty {
             await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
