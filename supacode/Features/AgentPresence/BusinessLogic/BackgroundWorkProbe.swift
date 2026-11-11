@@ -20,16 +20,17 @@ nonisolated enum BackgroundWorkProbe {
   /// Process names of agents whose shell wrapper is recognized above.
   static let agentProcessNames: Set<String> = ["claude"]
 
-  /// Display commands per surface. Agents are found by the surface id
-  /// Supacode exports into each terminal's environment, since program-status
-  /// presence (OSC 7501) carries no pid; hook-reported pids join as extra roots.
+  /// Display commands per surface, skipping surfaces whose agent is busy.
+  /// Agents are found by the surface id Supacode exports into each terminal's
+  /// environment: program-status presence (OSC 7501) carries no pid, and Claude
+  /// Code clears its record when a turn ends, so an idle agent has no record
+  /// to look up. Hook-reported pids join as extra roots.
   static func commands(
-    forSurfaces surfaces: Set<UUID>,
+    excludingSurfaces busySurfaces: Set<UUID>,
     knownAgentPids: [UUID: Set<pid_t>] = [:]
   ) -> [UUID: [String]] {
-    guard !surfaces.isEmpty else { return [:] }
-    var roots = knownAgentPids.filter { surfaces.contains($0.key) }
-    for (surface, pid) in agentProcesses() where surfaces.contains(surface) {
+    var roots = knownAgentPids.filter { !busySurfaces.contains($0.key) }
+    for (surface, pid) in agentProcesses() where !busySurfaces.contains(surface) {
       roots[surface, default: []].insert(pid)
     }
     return roots.compactMapValues { pids in
