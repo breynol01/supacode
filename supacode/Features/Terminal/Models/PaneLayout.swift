@@ -29,6 +29,7 @@ nonisolated struct PaneID: Hashable, Identifiable, Codable, Sendable {
 /// What kind of content a tab hosts; additive for future kinds.
 nonisolated enum ContentKind: String, Codable, Sendable {
   case terminal
+  case browser
 }
 
 /// How a command-running terminal launches (scripts, prompts). Blocking
@@ -92,13 +93,24 @@ nonisolated struct TerminalContentState: Equatable, Codable, Sendable {
   }
 }
 
+/// Browser-specific persisted state: the page to restore.
+nonisolated struct BrowserContentState: Equatable, Codable, Sendable {
+  var url: URL?
+
+  init(url: URL? = nil) {
+    self.url = url
+  }
+}
+
 /// Kind-keyed content payload; each case owns its kind's persisted state.
 nonisolated enum ContentState: Equatable, Codable, Sendable {
   case terminal(TerminalContentState)
+  case browser(BrowserContentState)
 
   private enum CodingKeys: String, CodingKey {
     case kind
     case terminal
+    case browser
   }
 
   init(from decoder: any Decoder) throws {
@@ -106,6 +118,8 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
     switch try container.decode(ContentKind.self, forKey: .kind) {
     case .terminal:
       self = .terminal(try container.decode(TerminalContentState.self, forKey: .terminal))
+    case .browser:
+      self = .browser(try container.decode(BrowserContentState.self, forKey: .browser))
     }
   }
 
@@ -115,12 +129,16 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
     case .terminal(let state):
       try container.encode(ContentKind.terminal, forKey: .kind)
       try container.encode(state, forKey: .terminal)
+    case .browser(let state):
+      try container.encode(ContentKind.browser, forKey: .kind)
+      try container.encode(state, forKey: .browser)
     }
   }
 
   var kind: ContentKind {
     switch self {
     case .terminal: .terminal
+    case .browser: .browser
     }
   }
 
@@ -128,6 +146,7 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
   var freshSeed: ContentState {
     switch self {
     case .terminal: .terminal(TerminalContentState(workingDirectory: nil))
+    case .browser: .browser(BrowserContentState())
     }
   }
 
@@ -136,6 +155,7 @@ nonisolated enum ContentState: Equatable, Codable, Sendable {
   var isEphemeral: Bool {
     switch self {
     case .terminal(let state): state.launch?.bypassZmx == true
+    case .browser: false
     }
   }
 }

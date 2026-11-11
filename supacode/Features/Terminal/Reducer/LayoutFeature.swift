@@ -1117,10 +1117,11 @@ extension LayoutFeature {
 }
 
 nonisolated extension ContentState {
-  /// The terminal payload; the only kind today.
+  /// The terminal payload; nil for non-terminal kinds.
   fileprivate var terminalState: TerminalContentState? {
     switch self {
     case .terminal(let state): state
+    case .browser: nil
     }
   }
 }

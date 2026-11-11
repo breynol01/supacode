@@ -302,6 +302,8 @@ struct TerminalContentBuilder {
       switch request.content {
       case .terminal(let terminalState):
         terminalContent(request, terminalState: terminalState)
+      case .browser(let browserState):
+        BrowserContent(id: request.contentID, initialState: browserState)
       }
     }
   }

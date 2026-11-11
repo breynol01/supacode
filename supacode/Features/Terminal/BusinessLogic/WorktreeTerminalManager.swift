@@ -357,6 +357,20 @@ final class WorktreeTerminalManager {
         tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
     case .openFileWithScript(let worktree, let input):
       openFileWithScript(in: worktree, input: input)
+    case .createBrowserTab(let worktree, let url, let id, let focusing, let anchor):
+      Task {
+        createTabAsync(
+          in: worktree, runSetupScriptIfNew: false, tabID: id, focusing: focusing, anchor: anchor,
+          browserURL: .some(url))
+      }
+    case .splitPaneWithBrowser(let worktree, let token, let direction, let url, let id, let focusing):
+      guard let token = token ?? layoutState(for: worktree.id)?.layout.focusedPaneID?.rawValue else {
+        terminalLogger.warning("splitPaneWithBrowser: no pane to split in worktree \(worktree.id).")
+        return true
+      }
+      splitPane(
+        in: worktree, paneToken: token, direction: direction, input: nil, id: id, focusing: focusing,
+        browserURL: .some(url))
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       ensureInitialTab(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
       // Arm terminal focus on the just-created host; it claims first responder
@@ -496,7 +510,7 @@ final class WorktreeTerminalManager {
       host(for: worktree).navigateSearchOnFocusedSurface(.next)
     case .navigateSearchPrevious(let worktree):
       host(for: worktree).navigateSearchOnFocusedSurface(.previous)
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
@@ -541,7 +555,7 @@ final class WorktreeTerminalManager {
       host(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
@@ -591,7 +605,7 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface,
@@ -938,7 +952,8 @@ final class WorktreeTerminalManager {
     customTitle: String? = nil,
     focusing: Bool = true,
     anchor: UUID? = nil,
-    isInitialTab: Bool = false
+    isInitialTab: Bool = false,
+    browserURL: URL?? = nil
   ) {
     let host = host(for: worktree) { runSetupScriptIfNew }
     // Mint upfront so a title-only request still has a rename target, keeping
@@ -965,8 +980,9 @@ final class WorktreeTerminalManager {
     let spec = NewTabSpec(
       tabID: TabID(rawValue: mintedID),
       contentID: ContentID(rawValue: mintedID),
-      title: "\(worktree.name) \(nextTabIndex(in: layout, prefix: worktree.name))",
-      content: .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
+      title: browserURL == nil ? "\(worktree.name) \(nextTabIndex(in: layout, prefix: worktree.name))" : "Browser",
+      content: browserURL.map { .browser(BrowserContentState(url: $0)) }
+        ?? .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
       geometry: ContentRuntime.liveValue.spawnGeometry(near: inheritedFrom, fallback: inheritedFrom),
       select: focusing,
       inheritedFrom: inheritedFrom
@@ -1328,7 +1344,8 @@ final class WorktreeTerminalManager {
     direction: SplitDirection,
     input: String?,
     id: UUID?,
-    focusing: Bool
+    focusing: Bool,
+    browserURL: URL?? = nil
   ) {
     _ = host(for: worktree)
     func fail() {
@@ -1357,7 +1374,8 @@ final class WorktreeTerminalManager {
       tabID: id.map(TabID.init(rawValue:)),
       contentID: id.map(ContentID.init(rawValue:)),
       title: "\(worktree.name) \(nextTabIndex(in: layout, prefix: worktree.name))",
-      content: .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
+      content: browserURL.map { .browser(BrowserContentState(url: $0)) }
+        ?? .terminal(TerminalContentState(workingDirectory: nil, launch: launch)),
       geometry: ContentRuntime.liveValue.spawnGeometry(near: anchorContent),
       select: focusing,
       inheritedFrom: anchorContent
