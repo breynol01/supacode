@@ -3,7 +3,7 @@
 # headless Claude and notify with the outcome.
 set -uo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)" || exit 1
+REPO="${FORK_REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}" || exit 1
 cd "$REPO" || exit 1
 
 notify() { osascript -e "display notification \"$2\" with title \"Supacode fork\" subtitle \"$1\"" >/dev/null 2>&1; }
