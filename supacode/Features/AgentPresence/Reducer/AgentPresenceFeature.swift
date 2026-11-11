@@ -161,6 +161,7 @@ struct AgentPresenceFeature {
     Reduce { state, action in
       @Dependency(\.continuousClock) var clock
       @Dependency(\.zmxClient) var zmxClient
+      @Dependency(\.backgroundWorkClient) var backgroundWorkClient
       switch action {
       case .delegate:
         return .none
@@ -194,7 +195,7 @@ struct AgentPresenceFeature {
               await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
             }
           }
-          let work = BackgroundWorkProbe.commands(excludingSurfaces: busySurfaces, knownAgentPids: knownPids)
+          let work = backgroundWorkClient.commands(busySurfaces, knownPids)
           // Only a change is worth an action: the sweep ticks every two seconds.
           guard work != previousWork else { return }
           await send(.backgroundWorkResult(work))
