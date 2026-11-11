@@ -186,6 +186,7 @@ struct AgentPresenceFeature {
         for (key, pids) in snapshot where !busySurfaces.contains(key.surfaceID) {
           knownPids[key.surfaceID, default: []].formUnion(pids)
         }
+        let previousWork = state.backgroundWork
         return .run { [knownPids] send in
           if !snapshot.isEmpty {
             let alive = Self.liveness(forSnapshot: snapshot)
@@ -194,6 +195,8 @@ struct AgentPresenceFeature {
             }
           }
           let work = BackgroundWorkProbe.commands(excludingSurfaces: busySurfaces, knownAgentPids: knownPids)
+          // Only a change is worth an action: the sweep ticks every two seconds.
+          guard work != previousWork else { return }
           await send(.backgroundWorkResult(work))
         }
 
