@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SupacodeSettingsShared
 
 /// Finds work an idle agent has left running: shell commands the agent spawned
 /// that outlive its turn (a background build, a poll, a dispatched LangGraph
@@ -16,11 +17,44 @@ nonisolated enum BackgroundWorkProbe {
   /// `zsh -c source ~/.claude/shell-snapshots/<snapshot> … eval '<cmd>' …`.
   static let shellWrapperMarkers = ["/.claude/shell-snapshots/"]
 
+  /// Process names of agents whose shell wrapper is recognized above.
+  static let agentProcessNames: Set<String> = ["claude"]
+
+  /// Display commands per surface. Agents are found by the surface id
+  /// Supacode exports into each terminal's environment, since program-status
+  /// presence (OSC 7501) carries no pid; hook-reported pids join as extra roots.
+  static func commands(
+    forSurfaces surfaces: Set<UUID>,
+    knownAgentPids: [UUID: Set<pid_t>] = [:]
+  ) -> [UUID: [String]] {
+    guard !surfaces.isEmpty else { return [:] }
+    var roots = knownAgentPids.filter { surfaces.contains($0.key) }
+    for (surface, pid) in agentProcesses() where surfaces.contains(surface) {
+      roots[surface, default: []].insert(pid)
+    }
+    return roots.compactMapValues { pids in
+      let commands = commands(forAgentPids: pids)
+      return commands.isEmpty ? nil : commands
+    }
+  }
+
+  /// Every running agent process tagged with the surface it was launched in.
+  static func agentProcesses() -> [(surface: UUID, pid: pid_t)] {
+    let prefix = AgentPresenceOSC.surfaceEnvVar + "="
+    return allPids().compactMap { pid in
+      guard agentProcessNames.contains(name(of: pid)),
+        let entry = processArguments(of: pid)?.environment.first(where: { $0.hasPrefix(prefix) }),
+        let surface = UUID(uuidString: String(entry.dropFirst(prefix.count)))
+      else { return nil }
+      return (surface, pid)
+    }
+  }
+
   /// Display commands for every marked child of the given agent pids.
   static func commands(forAgentPids pids: Set<pid_t>) -> [String] {
     pids.sorted().flatMap { pid in
       childPids(of: pid).compactMap { child in
-        guard let argv = arguments(of: child) else { return nil }
+        guard let argv = processArguments(of: child)?.argv else { return nil }
         let joined = argv.joined(separator: " ")
         guard shellWrapperMarkers.contains(where: joined.contains) else { return nil }
         return displayCommand(fromWrapper: joined)
@@ -52,8 +86,25 @@ nonisolated enum BackgroundWorkProbe {
     return buffer.prefix(count).filter { $0 > 0 }
   }
 
-  /// argv via `KERN_PROCARGS2`: argc, the exec path, padding, then argv.
-  private static func arguments(of pid: pid_t) -> [String]? {
+  private static func allPids() -> [pid_t] {
+    let capacity = 8192
+    var buffer = [pid_t](repeating: 0, count: capacity)
+    let count = buffer.withUnsafeMutableBytes { raw in
+      proc_listallpids(raw.baseAddress, Int32(raw.count))
+    }
+    guard count > 0 else { return [] }
+    return buffer.prefix(min(Int(count), capacity)).filter { $0 > 0 }
+  }
+
+  private static func name(of pid: pid_t) -> String {
+    var buffer = [CChar](repeating: 0, count: 256)
+    guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return "" }
+    return String(cString: buffer)
+  }
+
+  /// argv and environment via `KERN_PROCARGS2`: argc, the exec path,
+  /// padding, argv, then the environment strings.
+  private static func processArguments(of pid: pid_t) -> (argv: [String], environment: [String])? {
     var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
     var size = 0
     guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
@@ -63,13 +114,15 @@ nonisolated enum BackgroundWorkProbe {
     var index = MemoryLayout<Int32>.size
     while index < size, buffer[index] != 0 { index += 1 }
     while index < size, buffer[index] == 0 { index += 1 }
-    var args: [String] = []
-    while args.count < argc, index < size {
+    var strings: [String] = []
+    while index < size {
       let start = index
       while index < size, buffer[index] != 0 { index += 1 }
-      args.append(String(bytes: buffer[start..<index], encoding: .utf8) ?? "")
+      if index == start { break }
+      strings.append(String(bytes: buffer[start..<index], encoding: .utf8) ?? "")
       index += 1
     }
-    return args
+    let argCount = min(Int(argc), strings.count)
+    return (Array(strings.prefix(argCount)), Array(strings.dropFirst(argCount)))
   }
 }
