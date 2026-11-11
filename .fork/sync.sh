@@ -6,7 +6,7 @@ set -uo pipefail
 
 # Branch switches rewrite this file, so run from a private copy.
 if [ -z "${FORK_SYNC_REEXEC:-}" ]; then
-  FORK_REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)" || exit 1
+  FORK_REPO="${FORK_REPO:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}" || exit 1
   tmp="$(mktemp -t fork-sync).sh"
   cp "$0" "$tmp"
   FORK_SYNC_REEXEC=1 FORK_REPO="$FORK_REPO" exec bash "$tmp" "$@"
@@ -70,8 +70,10 @@ for b in "${branches[@]}"; do
   git merge -q --no-ff --no-edit "$b" || { log "merge of $b into personal conflicted (branches overlap)"; exit 2; }
 done
 
-rm -f .build/.tuist-generated-stamps/development
 for step in build-app lint test; do
+  # A project generated for one step leaves `make test` hanging ("test runner
+  # hung before establishing connection"); regenerate before each step.
+  rm -f .build/.tuist-generated-stamps/development
   log "make $step"
   make "$step" > "/tmp/fork-sync-$step.log" 2>&1 || { log "make $step failed; see /tmp/fork-sync-$step.log"; exit 3; }
 done

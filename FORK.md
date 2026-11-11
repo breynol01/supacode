@@ -27,7 +27,7 @@ Upstream's `AGENTS.md` and `CLAUDE.md` describe the codebase and stay untouched;
 
 ## Syncing to a new upstream release
 - Automatic: a launchd agent (`com.breynol01.supacode-fork-check`, Mondays 09:00) runs `.fork/check.sh`. When a new `v*` tag exists, it starts headless Claude with the `supacode-fork-sync` skill and posts a macOS notification with the result. The log is at `~/Library/Logs/supacode-fork-sync.log`.
-- Manual: `bash .fork/sync.sh` (`--target <ref>`, `--rebuild`, `--no-install`, `--no-push`).
+- Manual: `bash .fork/sync.sh` (`--target <ref>`, `--rebuild`, `--no-install`, `--no-push`). From a branch without `.fork/`: `git show fork/tooling:.fork/sync.sh > /tmp/fork-sync.sh && FORK_REPO=$PWD bash /tmp/fork-sync.sh`.
 - Exit codes:
   - 0: synced and installed, or already up to date.
   - 2: rebase conflict. The rebase is left paused.
@@ -39,7 +39,7 @@ Upstream's `AGENTS.md` and `CLAUDE.md` describe the codebase and stay untouched;
 - Keep upstream's behavior and re-apply the fork's intent on top of it (see "Fork changes").
 - If upstream now does what a fork change did, shrink or drop that branch, and remove it from `.fork/branches.txt` when it's empty.
 - After `git rebase --continue`, re-run `bash .fork/sync.sh`. Finished branches rebase as no-ops.
-- Build gotcha: after switching branches, `rm .build/.tuist-generated-stamps/development`. The sync script does this for you. A stale generated project shows up as "test runner hung before establishing connection".
+- Build gotcha: clear `.build/.tuist-generated-stamps/development` before `make test` (and after switching branches). `make build-app` followed by `make test` otherwise hangs with "test runner hung before establishing connection". The sync script clears it before every step.
 
 ## Starting new fork work
 1. `git checkout -b fork/<name> $(git tag -l 'v*' --sort=-v:refname | head -1)` (or the current base).
