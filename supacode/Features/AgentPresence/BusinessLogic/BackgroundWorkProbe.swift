@@ -1,4 +1,5 @@
 import Darwin
+import Dependencies
 import Foundation
 import SupacodeSettingsShared
 
@@ -125,5 +126,26 @@ nonisolated enum BackgroundWorkProbe {
     }
     let argCount = min(Int(argc), strings.count)
     return (Array(strings.prefix(argCount)), Array(strings.dropFirst(argCount)))
+  }
+}
+
+/// Injection seam for the probe: the live app scans real processes, tests see
+/// none (the test host is the live app, and a real scan would find the very
+/// agent running the suite).
+nonisolated struct BackgroundWorkClient: Sendable {
+  var commands: @Sendable (_ busySurfaces: Set<UUID>, _ knownAgentPids: [UUID: Set<pid_t>]) -> [UUID: [String]]
+}
+
+nonisolated extension BackgroundWorkClient: DependencyKey {
+  nonisolated static let liveValue = BackgroundWorkClient { busy, known in
+    BackgroundWorkProbe.commands(excludingSurfaces: busy, knownAgentPids: known)
+  }
+  nonisolated static let testValue = BackgroundWorkClient { _, _ in [:] }
+}
+
+nonisolated extension DependencyValues {
+  nonisolated var backgroundWorkClient: BackgroundWorkClient {
+    get { self[BackgroundWorkClient.self] }
+    set { self[BackgroundWorkClient.self] = newValue }
   }
 }
