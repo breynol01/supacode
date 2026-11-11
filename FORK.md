@@ -1,7 +1,7 @@
 # Fork maintenance (breynol01/supacode)
 
 A personal fork of [supabitapp/supacode](https://github.com/supabitapp/supacode) (FSL-1.1, internal use).
-Upstream's `AGENTS.md` and `CLAUDE.md` describe the codebase and stay untouched; this file covers the fork only.
+Canon: `AGENTS.md` (upstream's guidance plus a **Fork** section at the end), `CLAUDE.md` (pointer to `AGENTS.md`), `PRD.md`, `ARCHITECTURE.md`, `MEMORY.md`. This file is the maintenance runbook.
 
 ## Public repo
 `breynol01/supacode` is **public**: GitHub forks of public repos can't be private. Never commit secrets, 1Password secret references, tokens, home paths, or client/work names or data.
@@ -41,6 +41,7 @@ A local `pre-push` hook (`.git/hooks/pre-push`, not versioned) blocks pushes tha
 
 ## Resolving conflicts
 - Keep upstream's behavior and re-apply the fork's intent on top of it (see "Fork changes").
+- `AGENTS.md` / `CLAUDE.md` conflicts (both live on `fork/tooling`): take upstream's new `AGENTS.md` body, re-append our `## Fork (breynol01/supacode)` section at the end, and keep `CLAUDE.md` as the one-line pointer. Upstream's `CLAUDE.md` duplicates its `AGENTS.md`, so nothing is lost. rerere usually replays this.
 - If upstream now does what a fork change did, shrink or drop that branch, and remove it from `.fork/branches.txt` when it's empty.
 - After `git rebase --continue`, re-run `bash .fork/sync.sh`. Finished branches rebase as no-ops.
 - Build gotcha: clear `.build/.tuist-generated-stamps/development` before `make test` (and after switching branches). `make build-app` followed by `make test` otherwise hangs with "test runner hung before establishing connection". The sync script clears it before every step.
