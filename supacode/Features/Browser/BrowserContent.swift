@@ -67,7 +67,9 @@ final class BrowserContent: TabContent {
     let toolbar = browserToolbar
     observations = [
       view.observe(\.title, options: [.initial, .new]) { view, _ in
-        MainActor.assumeIsolated { chrome.reportedTitle = view.title.flatMap { $0.isEmpty ? nil : $0 } }
+        MainActor.assumeIsolated {
+          chrome.reportedTitle = view.title.flatMap { $0.isEmpty ? nil : $0 }
+        }
       },
       view.observe(\.isLoading, options: [.initial, .new]) { view, _ in
         MainActor.assumeIsolated { chrome.isWorking = view.isLoading }
@@ -131,7 +133,9 @@ nonisolated enum BrowserURL {
   static func resolve(_ text: String) -> URL? {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-    if let url = URL(string: trimmed), let scheme = url.scheme, ["http", "https", "file", "about"].contains(scheme) {
+    if let url = URL(string: trimmed), let scheme = url.scheme,
+      ["http", "https", "file", "about"].contains(scheme)
+    {
       return url
     }
     if !trimmed.contains(" "), trimmed.contains(".") || trimmed.hasPrefix("localhost") {
@@ -150,14 +154,26 @@ private struct BrowserURLBar: View {
 
   var body: some View {
     HStack(spacing: 6) {
-      Button { toolbar.webView?.goBack() } label: { Image(systemName: "chevron.left") }
-        .disabled(!toolbar.canGoBack)
-        .help("Back")
-      Button { toolbar.webView?.goForward() } label: { Image(systemName: "chevron.right") }
-        .disabled(!toolbar.canGoForward)
-        .help("Forward")
-      Button { toolbar.webView?.reload() } label: { Image(systemName: "arrow.clockwise") }
-        .help("Reload")
+      Button {
+        toolbar.webView?.goBack()
+      } label: {
+        Label("Back", systemImage: "chevron.left").labelStyle(.iconOnly)
+      }
+      .disabled(!toolbar.canGoBack)
+      .help("Back")
+      Button {
+        toolbar.webView?.goForward()
+      } label: {
+        Label("Forward", systemImage: "chevron.right").labelStyle(.iconOnly)
+      }
+      .disabled(!toolbar.canGoForward)
+      .help("Forward")
+      Button {
+        toolbar.webView?.reload()
+      } label: {
+        Label("Reload", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
+      }
+      .help("Reload")
       TextField("Search or enter address", text: $text)
         .textFieldStyle(.roundedBorder)
         .controlSize(.small)
