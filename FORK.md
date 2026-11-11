@@ -3,6 +3,10 @@
 A personal fork of [supabitapp/supacode](https://github.com/supabitapp/supacode) (FSL-1.1, internal use).
 Upstream's `AGENTS.md` and `CLAUDE.md` describe the codebase and stay untouched; this file covers the fork only.
 
+## Public repo
+`breynol01/supacode` is **public**: GitHub forks of public repos can't be private. Never commit secrets, 1Password secret references, tokens, home paths, or client/work names or data.
+A local `pre-push` hook (`.git/hooks/pre-push`, not versioned) blocks pushes that match those markers or that gitleaks flags. Machine-specific config (the skill, the launchd plist) stays outside the repo.
+
 ## Policy
 - Follow **upstream releases only**: `v*` tags. Never sync to `tip` or `main`.
 - Build on Supacode's own mechanisms (OSC 7501 program status, `AgentPresenceFeature`, the sidebar row snapshot, the kind-agnostic `TabContent` layer) before inventing a parallel path.
