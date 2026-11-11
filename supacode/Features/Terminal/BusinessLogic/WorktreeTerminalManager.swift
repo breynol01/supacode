@@ -307,6 +307,9 @@ final class WorktreeTerminalManager {
   }
 
   func handleCommand(_ command: TerminalClient.Command) {
+    if handleBrowserCommand(command) {
+      return
+    }
     if handleTabCommand(command) {
       return
     }
@@ -342,6 +345,28 @@ final class WorktreeTerminalManager {
     }
   }
 
+  private func handleBrowserCommand(_ command: TerminalClient.Command) -> Bool {
+    switch command {
+    case .createBrowserTab(let worktree, let url, let id, let focusing, let anchor):
+      Task {
+        createTabAsync(
+          in: worktree, runSetupScriptIfNew: false, tabID: id, focusing: focusing, anchor: anchor,
+          browserURL: .some(url))
+      }
+    case .splitPaneWithBrowser(let worktree, let token, let direction, let url, let id, let focusing):
+      guard let token = token ?? layoutState(for: worktree.id)?.layout.focusedPaneID?.rawValue else {
+        terminalLogger.warning("splitPaneWithBrowser: no pane to split in worktree \(worktree.id).")
+        return true
+      }
+      splitPane(
+        in: worktree, paneToken: token, direction: direction, input: nil, id: id, focusing: focusing,
+        browserURL: .some(url))
+    default:
+      return false
+    }
+    return true
+  }
+
   // swiftlint:disable:next cyclomatic_complexity
   private func handleTabCommand(_ command: TerminalClient.Command) -> Bool {
     switch command {
@@ -357,20 +382,6 @@ final class WorktreeTerminalManager {
         tabID: id, customTitle: title, focusing: focusing, anchor: anchor)
     case .openFileWithScript(let worktree, let input):
       openFileWithScript(in: worktree, input: input)
-    case .createBrowserTab(let worktree, let url, let id, let focusing, let anchor):
-      Task {
-        createTabAsync(
-          in: worktree, runSetupScriptIfNew: false, tabID: id, focusing: focusing, anchor: anchor,
-          browserURL: .some(url))
-      }
-    case .splitPaneWithBrowser(let worktree, let token, let direction, let url, let id, let focusing):
-      guard let token = token ?? layoutState(for: worktree.id)?.layout.focusedPaneID?.rawValue else {
-        terminalLogger.warning("splitPaneWithBrowser: no pane to split in worktree \(worktree.id).")
-        return true
-      }
-      splitPane(
-        in: worktree, paneToken: token, direction: direction, input: nil, id: id, focusing: focusing,
-        browserURL: .some(url))
     case .ensureInitialTab(let worktree, let runSetupScriptIfNew, let focusing):
       ensureInitialTab(in: worktree, runSetupScriptIfNew: runSetupScriptIfNew, focusing: focusing)
       // Arm terminal focus on the just-created host; it claims first responder
@@ -510,7 +521,8 @@ final class WorktreeTerminalManager {
       host(for: worktree).navigateSearchOnFocusedSurface(.next)
     case .navigateSearchPrevious(let worktree):
       host(for: worktree).navigateSearchOnFocusedSurface(.previous)
-    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createBrowserTab, .splitPaneWithBrowser,
+      .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface, .splitSurface,
       .destroyTab, .destroySurface, .renameTab, .setImagePasteAgents, .prune, .removeWorktreeLayout,
@@ -555,7 +567,8 @@ final class WorktreeTerminalManager {
       host(for: worktree).performBindingAction(action, onSurfaceID: surfaceID)
     case .setImagePasteAgents(let surfaceID, let agents):
       setImagePasteAgents(agents, onSurfaceID: surfaceID)
-    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createBrowserTab, .splitPaneWithBrowser,
+      .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .startSearch, .searchSelection,
       .navigateSearchNext, .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab,
       .focusSurface, .splitSurface, .destroyTab, .destroySurface, .renameTab, .prune, .removeWorktreeLayout,
@@ -605,7 +618,8 @@ final class WorktreeTerminalManager {
       // event fires; refresh here or the window keeps the previous tint.
       refreshFocusedSurfaceBackground()
       terminalLogger.info("Selected worktree \(id?.rawValue ?? "nil")")
-    case .createTab, .createTabWithInput, .createBrowserTab, .splitPaneWithBrowser, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
+    case .createBrowserTab, .splitPaneWithBrowser,
+      .createTab, .createTabWithInput, .openFileWithScript, .ensureInitialTab, .stopRunScript, .stopScript,
       .runBlockingScript, .closeFocusedTab, .closeFocusedSurface, .performBindingAction,
       .performBindingActionOnSurface, .setImagePasteAgents, .startSearch, .searchSelection, .navigateSearchNext,
       .navigateSearchPrevious, .selectTab, .selectTabAtIndex, .selectRelativeTab, .focusSurface,
