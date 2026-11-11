@@ -54,6 +54,20 @@ struct BackgroundWorkTests {
     #expect(state.rowSnapshot(across: [surfaceID], badgesEnabled: true).backgroundCommands.isEmpty)
   }
 
+  @Test func idleSurfacesExcludeAnySurfaceWithAWorkingAgent() {
+    var state = Feature.State()
+    let reducer = Feature()
+    let idle = UUID()
+    let busy = UUID()
+    for (surface, status) in [(idle, ProgramStatusReport.State.idle), (busy, .working)] {
+      _ = reducer.reduce(
+        into: &state,
+        action: .programStatusReceived(
+          surfaceID: surface, report: ProgramStatusReport(state: status, app: "claude-code")))
+    }
+    #expect(Feature.idleSurfaces(in: state) == [idle])
+  }
+
   @Test func emptyResultClearsAndClosingASurfaceDropsIt() {
     var state = Feature.State()
     let reducer = Feature()
