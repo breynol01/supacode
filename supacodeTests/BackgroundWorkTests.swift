@@ -54,18 +54,38 @@ struct BackgroundWorkTests {
     #expect(state.rowSnapshot(across: [surfaceID], badgesEnabled: true).backgroundCommands.isEmpty)
   }
 
-  @Test func idleSurfacesExcludeAnySurfaceWithAWorkingAgent() {
+  @Test func busySurfacesAreWorkingOrBlockedOnly() {
     var state = Feature.State()
     let reducer = Feature()
     let idle = UUID()
     let busy = UUID()
-    for (surface, status) in [(idle, ProgramStatusReport.State.idle), (busy, .working)] {
+    let blocked = UUID()
+    for (surface, status) in [(idle, ProgramStatusReport.State.idle), (busy, .working), (blocked, .blocked)] {
       _ = reducer.reduce(
         into: &state,
         action: .programStatusReceived(
           surfaceID: surface, report: ProgramStatusReport(state: status, app: "claude-code")))
     }
-    #expect(Feature.idleSurfaces(in: state) == [idle])
+    #expect(Feature.busySurfaces(in: state) == [busy, blocked])
+  }
+
+  @Test func backgroundWorkAloneKeepsARowActive() {
+    var row = SidebarItemFeature.State(
+      id: WorktreeID("/tmp/wt"),
+      repositoryID: "/tmp/repo",
+      kind: .gitWorktree,
+      name: "wt",
+      branchName: "wt",
+      subtitle: nil,
+      workingDirectory: URL(fileURLWithPath: "/tmp/wt"),
+      repositoryAccent: nil,
+      isMainWorktree: false,
+      isPinned: false,
+      hasMergedBadge: false
+    )
+    #expect(SidebarActiveClassification.classify(row) == nil)
+    row.agentSnapshot = Feature.RowSnapshot(backgroundCommands: ["sleep 600"])
+    #expect(SidebarActiveClassification.classify(row) == .agent)
   }
 
   @Test func emptyResultClearsAndClosingASurfaceDropsIt() {

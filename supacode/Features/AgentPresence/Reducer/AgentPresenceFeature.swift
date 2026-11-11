@@ -181,12 +181,9 @@ struct AgentPresenceFeature {
         // Run `kill(2)` off the main actor; the reducer body is shared with action-burst paths.
         let snapshot: [PresenceKey: Set<pid_t>] = state.records
           .compactMapValues { record in record.pids.isEmpty ? nil : record.pids }
-        let idleSurfaces = Self.idleSurfaces(in: state)
-        guard !snapshot.isEmpty || !idleSurfaces.isEmpty else {
-          return state.backgroundWork.isEmpty ? .none : .send(.backgroundWorkResult([:]))
-        }
+        let busySurfaces = Self.busySurfaces(in: state)
         var knownPids: [UUID: Set<pid_t>] = [:]
-        for (key, pids) in snapshot where idleSurfaces.contains(key.surfaceID) {
+        for (key, pids) in snapshot where !busySurfaces.contains(key.surfaceID) {
           knownPids[key.surfaceID, default: []].formUnion(pids)
         }
         return .run { [knownPids] send in
@@ -196,7 +193,7 @@ struct AgentPresenceFeature {
               await send(.livenessSweepResult(snapshot: snapshot, alive: alive))
             }
           }
-          let work = BackgroundWorkProbe.commands(forSurfaces: idleSurfaces, knownAgentPids: knownPids)
+          let work = BackgroundWorkProbe.commands(excludingSurfaces: busySurfaces, knownAgentPids: knownPids)
           await send(.backgroundWorkResult(work))
         }
 
@@ -441,16 +438,13 @@ struct AgentPresenceFeature {
     state.records = state.records.filter { !surfaces.contains($0.key.surfaceID) }
   }
 
-  /// Surfaces with an idle agent and no agent working, the only ones whose
-  /// leftover children count as background work.
-  static func idleSurfaces(in state: State) -> Set<UUID> {
-    var idle: Set<UUID> = []
-    var working: Set<UUID> = []
-    for (key, record) in state.records {
-      if record.activity == .idle { idle.insert(key.surfaceID) }
-      if record.activity.isWorking { working.insert(key.surfaceID) }
-    }
-    return idle.subtracting(working)
+  /// Surfaces whose agent is mid-turn or parked on the user; their agent's
+  /// children are foreground work, not background work.
+  static func busySurfaces(in state: State) -> Set<UUID> {
+    Set(
+      state.records.compactMap { key, record in
+        record.activity.isWorking || record.activity == .awaitingInput ? key.surfaceID : nil
+      })
   }
 
   /// Pure liveness check; returns only keys whose alive subset diverges from the snapshot.
