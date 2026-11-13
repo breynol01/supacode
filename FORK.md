@@ -29,6 +29,7 @@ A local `pre-push` hook (`.git/hooks/pre-push`, not versioned) blocks pushes tha
   - `BackgroundWorkProbe` finds `claude` processes by `SUPACODE_SURFACE_ID` and looks for children carrying Claude Code's `~/.claude/shell-snapshots/` wrapper.
   - The probe is injected as `BackgroundWorkClient`; its `testValue` is empty, because the test host is the live app.
   - Known gap: daemon-hosted Claude sessions (`claude daemon` / `bg-spare`) aren't under the tab and their surface ID goes stale. The fallback idea is `~/.claude/sessions/*.json`.
+- `fork/ghostty-renderer-fixes`: upstream Ghostty renderer fixes not yet in Supacode's pin; drop once the pin passes ffaaf5d7a and 3e29fcd62.
 
 ## Syncing to a new upstream release
 - Automatic: a launchd agent (`com.breynol01.supacode-fork-check`, Mondays 09:00) runs `.fork/check.sh`. When a new `v*` tag exists, it starts headless Claude with the `supacode-fork-sync` skill and posts a macOS notification with the result. The log is at `~/Library/Logs/supacode-fork-sync.log`.
