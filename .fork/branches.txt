@@ -1,0 +1,7 @@
+# fork/* branches merged into `personal`, in order. One per line; # comments ignored.
+fork/tooling
+fork/no-auto-update
+fork/browser-pane
+fork/background-work
+fork/ghostty-renderer-fixes
+fork/sidebar-folders
