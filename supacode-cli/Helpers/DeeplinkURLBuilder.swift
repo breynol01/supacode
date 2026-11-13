@@ -43,10 +43,13 @@ nonisolated enum DeeplinkURLBuilder {
     "supacode://worktree/\(worktreeID)/tab/\(tabID)"
   }
 
-  static func tabNew(worktreeID: String, input: String?, id: String?, title: String?, pane: String?) -> String {
+  static func tabNew(
+    worktreeID: String, input: String?, id: String?, title: String?, pane: String?, browserURL: String? = nil
+  ) -> String {
     var url = "supacode://worktree/\(worktreeID)/tab/new"
     var params: [String] = []
     if let input { params.append("input=\(percentEncodeQueryValue(input))") }
+    if let browserURL { params.append("url=\(percentEncodeQueryValue(browserURL))") }
     if let id { params.append("id=\(id)") }
     if let title { params.append("title=\(percentEncodeQueryValue(title))") }
     if let pane { params.append("pane=\(pane)") }
@@ -115,6 +118,7 @@ nonisolated enum DeeplinkURLBuilder {
     var direction: String?
     var input: String?
     var id: String?
+    var browserURL: String?
   }
 
   static func paneSplit(worktreeID: String, paneToken: String, options: PaneSplitOptions) -> String {
@@ -123,6 +127,7 @@ nonisolated enum DeeplinkURLBuilder {
     if let direction = options.direction { params.append("direction=\(direction)") }
     if let input = options.input { params.append("input=\(percentEncodeQueryValue(input))") }
     if let id = options.id { params.append("id=\(id)") }
+    if let browserURL = options.browserURL { params.append("url=\(percentEncodeQueryValue(browserURL))") }
     if !params.isEmpty { url += "?\(params.joined(separator: "&"))" }
     return url
   }

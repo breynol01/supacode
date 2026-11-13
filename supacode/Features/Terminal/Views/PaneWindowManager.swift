@@ -624,6 +624,7 @@ private struct WindowedPaneRootView: View {
         // neighbor focus, and the main scene's actions would otherwise hit
         // the selected worktree.
         .focusedAction(\.splitTerminalAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
+        .focusedAction(\.openBrowserSplitAction, enabled: false) {}
         .focusedAction(\.focusSplitAction, enabled: false) { (_: TerminalSplitMenuDirection) in }
         .focusedAction(\.toggleSplitZoomAction, enabled: false) {}
         .focusedAction(\.equalizeSplitsAction, enabled: false) {}

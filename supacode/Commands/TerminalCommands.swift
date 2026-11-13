@@ -8,6 +8,7 @@ struct TerminalCommands: Commands {
   @FocusedValue(\.newTerminalAction) private var newTerminalAction
   @FocusedValue(\.renameTabAction) private var renameTabAction
   @FocusedValue(\.splitTerminalAction) private var splitTerminalAction
+  @FocusedValue(\.openBrowserSplitAction) private var openBrowserSplitAction
   @FocusedValue(\.toggleWindowModeAction) private var toggleWindowModeAction
   @FocusedValue(\.toggleSplitZoomAction) private var toggleSplitZoomAction
   @FocusedValue(\.equalizeSplitsAction) private var equalizeSplitsAction
@@ -45,6 +46,12 @@ struct TerminalCommands: Commands {
         .appKeyboardShortcut(direction.appShortcut.effective(from: overrides))
         .disabled(splitTerminalAction?.isEnabled != true)
       }
+
+      Button("Open Browser in Split", systemImage: "globe") {
+        openBrowserSplitAction?()
+      }
+      .keyboardShortcut("l", modifiers: [.command, .shift])
+      .disabled(openBrowserSplitAction?.isEnabled != true)
 
       Divider()
 
@@ -227,6 +234,17 @@ extension FocusedValues {
   var renameTabAction: FocusedAction<Void>? {
     get { self[RenameTabActionKey.self] }
     set { self[RenameTabActionKey.self] = newValue }
+  }
+}
+
+private struct OpenBrowserSplitActionKey: FocusedValueKey {
+  typealias Value = FocusedAction<Void>
+}
+
+extension FocusedValues {
+  var openBrowserSplitAction: FocusedAction<Void>? {
+    get { self[OpenBrowserSplitActionKey.self] }
+    set { self[OpenBrowserSplitActionKey.self] = newValue }
   }
 }
 
