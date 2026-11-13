@@ -73,6 +73,7 @@ struct WorktreeCustomizationParentTests {
         defaultName: "feature/x",
         title: "Spicy",
         color: .blue,
+        supportsFolder: true,
       )
     }
   }
@@ -89,6 +90,7 @@ struct WorktreeCustomizationParentTests {
         defaultName: "feature/x",
         title: "",
         color: nil,
+        supportsFolder: true,
       )
     }
   }
@@ -111,6 +113,101 @@ struct WorktreeCustomizationParentTests {
         color: nil,
       )
     }
+  }
+
+  @Test func requestNewWorktreeFolderFocusesFolderAndSuggestsExisting() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock { sidebar in
+      sidebar.insert(worktree: "other", in: self.repoID, bucket: .unpinned, item: .init(folder: "Widgets"))
+    }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestNewWorktreeFolder(worktreeID, repoID)) {
+      $0.worktreeCustomization = WorktreeCustomizationFeature.State(
+        worktreeID: self.worktreeID,
+        repositoryID: self.repoID,
+        defaultName: "feature/x",
+        title: "",
+        color: nil,
+        supportsFolder: true,
+        existingFolders: ["Widgets"],
+        focusesFolderOnAppear: true,
+      )
+    }
+  }
+
+  @Test func saveDelegatePersistsFolder() async {
+    var initial = makeInitialState()
+    initial.worktreeCustomization = WorktreeCustomizationFeature.State(
+      worktreeID: worktreeID,
+      repositoryID: repoID,
+      defaultName: "feature/x",
+      title: "",
+      color: nil,
+      supportsFolder: true,
+    )
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(
+      .worktreeCustomization(
+        .presented(
+          .delegate(.save(worktreeID: worktreeID, repositoryID: repoID, title: nil, color: nil, folder: "Widgets"))
+        ))
+    )
+    #expect(store.state.worktreeCustomization == nil)
+    #expect(store.state.sidebar.folder(of: worktreeID, in: repoID) == "Widgets")
+  }
+
+  @Test func setWorktreesFolderAssignsAndClears() async {
+    let store = TestStore(initialState: makeInitialState()) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.setWorktreesFolder([worktreeID], repoID, folder: " iOS widgets "))
+    #expect(store.state.sidebar.folder(of: worktreeID, in: repoID) == "iOS widgets")
+
+    await store.send(.setWorktreesFolder([worktreeID], repoID, folder: nil))
+    #expect(store.state.sidebar.folder(of: worktreeID, in: repoID) == nil)
+  }
+
+  @Test func setWorktreesFolderIgnoresFolderRepositories() async {
+    let store = TestStore(initialState: makeInitialState(isGitRepository: false)) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+
+    await store.send(.setWorktreesFolder([worktreeID], repoID, folder: "Widgets"))
+    #expect(store.state.sidebar.folder(of: worktreeID, in: repoID) == nil)
+  }
+
+  @Test func foldersHideCollapsedRowsFromHotkeyOrderAndRevealExpandsThem() async {
+    var state = makeInitialState()
+    state.$sidebar.withLock { sidebar in
+      sidebar.setFolder("Widgets", worktree: self.worktreeID, in: self.repoID)
+      sidebar.sections[self.repoID]?.buckets[.unpinned]?.collapsedBranchPrefixes = ["folder:Widgets"]
+    }
+    let allRepos = Set(state.repositories.map(\.id))
+    #expect(!state.orderedSidebarItemIDs(includingRepositoryIDs: allRepos).contains(worktreeID))
+    #expect(
+      state.orderedSidebarItemIDs(includingRepositoryIDs: allRepos, ignoreCollapsedGroups: true)
+        .contains(worktreeID)
+    )
+
+    state.setSingleWorktreeSelection(worktreeID)
+    let store = TestStore(initialState: state) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off
+    await store.send(.revealSelectedWorktreeInSidebar)
+    #expect(
+      store.state.sidebar.sections[repoID]?.buckets[.unpinned]?.collapsedBranchPrefixes.isEmpty == true
+    )
   }
 
   @Test func requestCustomizeWorktreeNoOpsForMainWorktrees() async {
