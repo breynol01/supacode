@@ -34,6 +34,9 @@ nonisolated extension WorkspaceClient: DependencyKey {
         // fall back to a different app.
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: action.bundleIdentifier)
         else { return .appNotFound(action) }
+        if let schemeURL = action.urlSchemeTarget(forPath: fileURL.path(percentEncoded: false)) {
+          return await WorktreeOpener.openSchemeURL(schemeURL, action: action)
+        }
         return await withCheckedContinuation { continuation in
           NSWorkspace.shared.open(
             [fileURL],
@@ -96,6 +99,13 @@ enum WorktreeOpener {
       onError(.appNotFound(action))
       return
     }
+    if let schemeURL = action.urlSchemeTarget(forPath: targetURL.path(percentEncoded: false)) {
+      Task { @MainActor in
+        guard let error = await openSchemeURL(schemeURL, action: action) else { return }
+        onError(error)
+      }
+      return
+    }
     for behavior in action.openBehaviors {
       switch behavior {
       case .workspace(let configuration):
@@ -125,6 +135,16 @@ enum WorktreeOpener {
         message: "No supported open behavior was available for this worktree."
       )
     )
+  }
+
+  /// Opens an app's custom-scheme URL (see `OpenWorktreeAction.urlSchemeTarget`);
+  /// `nil` means the URL was handed off.
+  static func openSchemeURL(_ url: URL, action: OpenWorktreeAction) async -> OpenActionError? {
+    await withCheckedContinuation { continuation in
+      NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+        continuation.resume(returning: error.map { .openFailed(action, $0) })
+      }
+    }
   }
 
   /// The pre-launch outcome for a remote open: the process to run, or the error

@@ -76,6 +76,22 @@ struct RepositorySettingsCodableTests {
     #expect(decoded.openFileScript == "nvim \"$SUPACODE_FILE_PATH\"")
   }
 
+  @Test func openNotesInObsidianDefaultsToOnWhenMissing() throws {
+    let json = #"{"setupScript":"","archiveScript":"","deleteScript":"","runScript":"","openActionID":"automatic"}"#
+    let settings = try JSONDecoder().decode(RepositorySettings.self, from: Data(json.utf8))
+    #expect(settings.openNotesInObsidian == nil)
+    #expect(settings.opensNotesInObsidian)
+  }
+
+  @Test func openNotesInObsidianRoundTrips() throws {
+    var settings = RepositorySettings.default
+    settings.opensNotesInObsidian = false
+    let data = try JSONEncoder().encode(settings)
+    let decoded = try JSONDecoder().decode(RepositorySettings.self, from: data)
+    #expect(decoded.openNotesInObsidian == false)
+    #expect(!decoded.opensNotesInObsidian)
+  }
+
   @Test func encodeRoundTripPopulatesRunScript() throws {
     // Encoding settings with scripts should derive `runScript` from
     // the first `.run`-kind script's command.
@@ -325,6 +341,42 @@ struct RepositorySettingsScriptTests {
     ) {
       RepositorySettingsFeature()
     }
+  }
+
+  @Test(.dependencies) func taskFlagsRegisteredObsidianVault() async {
+    let store = TestStore(
+      initialState: RepositorySettingsFeature.State(
+        rootURL: Self.rootURL, isGitRepository: false, settings: .default
+      )
+    ) {
+      RepositorySettingsFeature()
+    } withDependencies: {
+      $0.obsidianVaultClient.vaultRoot = { $0 }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.task)
+    await store.receive(\.obsidianVaultDetected) {
+      $0.isObsidianVault = true
+    }
+    await store.finish()
+  }
+
+  @Test(.dependencies) func taskLeavesNonVaultUnflagged() async {
+    let store = TestStore(
+      initialState: RepositorySettingsFeature.State(
+        rootURL: Self.rootURL, isGitRepository: false, settings: .default
+      )
+    ) {
+      RepositorySettingsFeature()
+    } withDependencies: {
+      $0.obsidianVaultClient.vaultRoot = { _ in nil }
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.task)
+    await store.finish()
+    #expect(store.state.isObsidianVault == false)
   }
 
   @Test(.dependencies) func addScriptAppendsCustomScript() async {

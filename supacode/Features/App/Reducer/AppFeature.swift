@@ -374,6 +374,7 @@ struct AppFeature {
   @Dependency(RepositoryPersistenceClient.self) private var repositoryPersistence
   @Dependency(WorkspaceClient.self) private var workspaceClient
   @Dependency(\.openActionAvailability) private var openActionAvailability
+  @Dependency(\.obsidianVaultClient) private var obsidianVaultClient
   @Dependency(NotificationSoundClient.self) private var notificationSoundClient
   @Dependency(SystemNotificationClient.self) private var systemNotificationClient
   @Dependency(TerminalClient.self) private var terminalClient
@@ -969,19 +970,46 @@ struct AppFeature {
         }
 
       case .openFileFromExplorer(let fileURL):
-        // No script (or no/remote worktree): open with the system default app.
-        let openWithDefaultApp = Effect<Action>.run { @MainActor send in
-          guard let error = await workspaceClient.openFile(fileURL, nil) else { return }
-          send(.openWorktreeFailed(error))
+        // Precedence: repository script, then Obsidian for a note in a registered
+        // vault, then the global script, then the system default app.
+        let workspaceClient = workspaceClient
+        let terminalClient = terminalClient
+        let openWithDefaultApp: @Sendable () async -> OpenActionError? = {
+          await workspaceClient.openFile(fileURL, nil)
         }
         // Explorer is local-only; the host guard keeps a script off a remote path defensively.
         guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
           worktree.host == nil
-        else { return openWithDefaultApp }
-        let script = resolveOpenFileScript(in: worktree)
-        guard !script.isEmpty else { return openWithDefaultApp }
-        let input = Self.openFileCommandInput(script: script, fileURL: fileURL)
-        return .run { _ in await terminalClient.send(.openFileWithScript(worktree, input: input)) }
+        else { return Self.openFileEffect(openWithDefaultApp) }
+        let repositorySettings = RepositorySettingsKey(
+          rootURL: worktree.repositoryRootURL,
+          host: worktree.host
+        ).currentSettings()
+        let runScript: @Sendable (String) async -> OpenActionError? = { input in
+          await terminalClient.send(.openFileWithScript(worktree, input: input))
+          return nil
+        }
+        if let repositoryScript = Self.nonBlankScript(repositorySettings.openFileScript) {
+          let input = Self.openFileCommandInput(script: repositoryScript, fileURL: fileURL)
+          return Self.openFileEffect { await runScript(input) }
+        }
+        @SharedReader(.settingsFile) var settingsFile
+        let globalInput = Self.nonBlankScript(settingsFile.global.openFileScript).map {
+          Self.openFileCommandInput(script: $0, fileURL: fileURL)
+        }
+        let fallback: @Sendable () async -> OpenActionError? = {
+          guard let globalInput else { return await openWithDefaultApp() }
+          return await runScript(globalInput)
+        }
+        guard ObsidianVaults.isNote(fileURL),
+          repositorySettings.opensNotesInObsidian,
+          state.installedOpenActions.contains(.obsidian)
+        else { return Self.openFileEffect(fallback) }
+        let obsidianVaultClient = obsidianVaultClient
+        return Self.openFileEffect {
+          guard await obsidianVaultClient.vaultRoot(fileURL) != nil else { return await fallback() }
+          return await workspaceClient.openFile(fileURL, .obsidian)
+        }
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
@@ -3224,17 +3252,17 @@ struct AppFeature {
   /// The repo open-file script, else the global one; repo wins. Reads the repo via
   /// `currentSettings()` (fresh from disk) so a double-click uses today's script. A blank
   /// value counts as unset; "" means "use the system default app".
-  private func resolveOpenFileScript(in worktree: Worktree) -> String {
-    let repositorySettings = RepositorySettingsKey(
-      rootURL: worktree.repositoryRootURL,
-      host: worktree.host
-    ).currentSettings()
-    if !repositorySettings.openFileScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return repositorySettings.openFileScript
+  /// The script, or `nil` when it is blank (blank means unset).
+  static func nonBlankScript(_ script: String) -> String? {
+    script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : script
+  }
+
+  /// Runs a File Explorer open, surfacing any launch error as an alert.
+  private static func openFileEffect(_ open: @escaping @Sendable () async -> OpenActionError?) -> Effect<Action> {
+    .run { send in
+      guard let error = await open() else { return }
+      await send(.openWorktreeFailed(error))
     }
-    @SharedReader(.settingsFile) var settingsFile
-    let global = settingsFile.global.openFileScript
-    return global.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : global
   }
 
   /// The script with the file's path exported as `SUPACODE_FILE_PATH`, quoted so it stays literal.

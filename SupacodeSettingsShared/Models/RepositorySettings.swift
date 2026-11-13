@@ -23,6 +23,15 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   /// Forge for this repository. `nil` resolves automatically from the remote;
   /// `"none"` disables forge integration for the repository.
   public var forgeID: String?
+  /// Whether File Explorer opens notes (`.md`, `.canvas`, `.base`) in Obsidian
+  /// when the repository is a registered Obsidian vault. `nil` means on.
+  public var openNotesInObsidian: Bool?
+
+  /// `openNotesInObsidian` with its default applied, for direct `Toggle` binding.
+  public var opensNotesInObsidian: Bool {
+    get { openNotesInObsidian ?? true }
+    set { openNotesInObsidian = newValue }
+  }
 
   private enum CodingKeys: String, CodingKey {
     case setupScript
@@ -39,6 +48,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     case pullRequestMergeStrategy
     case mergedWorktreeAction
     case forgeID
+    case openNotesInObsidian
   }
 
   public static let `default` = RepositorySettings(
@@ -56,6 +66,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     pullRequestMergeStrategy: nil,
     mergedWorktreeAction: nil,
     forgeID: nil,
+    openNotesInObsidian: nil,
   )
 
   public init(
@@ -72,7 +83,8 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     copyUntrackedOnWorktreeCreate: Bool? = nil,
     pullRequestMergeStrategy: PullRequestMergeStrategy? = nil,
     mergedWorktreeAction: MergedWorktreeAction? = nil,
-    forgeID: String? = nil
+    forgeID: String? = nil,
+    openNotesInObsidian: Bool? = nil
   ) {
     self.setupScript = setupScript
     self.archiveScript = archiveScript
@@ -88,6 +100,7 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     self.pullRequestMergeStrategy = pullRequestMergeStrategy
     self.mergedWorktreeAction = mergedWorktreeAction
     self.forgeID = forgeID
+    self.openNotesInObsidian = openNotesInObsidian
   }
 
   public init(from decoder: Decoder) throws {
@@ -138,6 +151,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     forgeID =
       try container.decodeIfPresent(String.self, forKey: .forgeID)
       ?? Self.default.forgeID
+    openNotesInObsidian =
+      try container.decodeIfPresent(Bool.self, forKey: .openNotesInObsidian)
+      ?? Self.default.openNotesInObsidian
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -162,5 +178,6 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
     try container.encodeIfPresent(pullRequestMergeStrategy, forKey: .pullRequestMergeStrategy)
     try container.encodeIfPresent(mergedWorktreeAction, forKey: .mergedWorktreeAction)
     try container.encodeIfPresent(forgeID, forKey: .forgeID)
+    try container.encodeIfPresent(openNotesInObsidian, forKey: .openNotesInObsidian)
   }
 }

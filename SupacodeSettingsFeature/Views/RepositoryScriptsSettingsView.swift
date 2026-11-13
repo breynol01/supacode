@@ -54,6 +54,15 @@ public struct RepositoryScriptsSettingsView: View {
           iconColor: .teal,
           footerExample: "nvim \"$SUPACODE_FILE_PATH\""
         )
+        if store.isObsidianVault {
+          Section {
+            Toggle("Open notes in Obsidian", isOn: $store.settings.opensNotesInObsidian)
+              .help("Double-clicked .md, .canvas, and .base files open in this Obsidian vault.")
+          } footer: {
+            Text("This folder is a registered Obsidian vault. A repository Open File Script still takes precedence.")
+              .foregroundStyle(.secondary)
+          }
+        }
 
         // User-defined scripts, each in its own section.
         ForEach($store.settings.scripts) { $script in
