@@ -60,7 +60,8 @@ branches=()
 while IFS= read -r line; do branches+=("$line"); done < <(git show fork/tooling:.fork/branches.txt | sed 's/#.*//' | awk 'NF')
 [ ${#branches[@]} -gt 0 ] || { log "no branches in .fork/branches.txt"; exit 1; }
 
-git fetch -q upstream --tags || { log "fetch upstream failed"; exit 1; }
+# --force: upstream rewrites its rolling `tip` tag; we only follow v* tags.
+git fetch -q --force upstream --tags || { log "fetch upstream failed"; exit 1; }
 [ -n "$target" ] || target="$(git tag -l 'v*' --sort=-v:refname | head -1)"
 git rev-parse -q --verify "$target^{commit}" >/dev/null || { log "unknown target: $target"; exit 1; }
 
