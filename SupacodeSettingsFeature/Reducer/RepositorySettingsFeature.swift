@@ -20,6 +20,9 @@ public struct RepositorySettingsFeature {
     public var branchOptions: [String] = []
     public var defaultWorktreeBaseRef = "origin/main"
     public var isBranchDataLoaded = false
+    /// Whether the root is a registered Obsidian vault, which surfaces the
+    /// "open notes in Obsidian" toggle. Detected on `.task`.
+    public var isObsidianVault = false
 
     public var exampleWorktreePath: String {
       SupacodePaths.exampleWorktreePath(
@@ -80,6 +83,7 @@ public struct RepositorySettingsFeature {
       globalMergedWorktreeAction: MergedWorktreeAction
     )
     case branchDataLoaded([String], defaultBaseRef: String)
+    case obsidianVaultDetected
     case addScript(ScriptKind)
     case removeScript(ScriptDefinition.ID)
     case alert(PresentationAction<Alert>)
@@ -93,6 +97,7 @@ public struct RepositorySettingsFeature {
   }
 
   @Dependency(RepositorySettingsGitClient.self) private var gitClient
+  @Dependency(\.obsidianVaultClient) private var obsidianVaultClient
 
   public init() {}
 
@@ -113,16 +118,42 @@ public struct RepositorySettingsFeature {
         let globalMergeStrategy = global.pullRequestMergeStrategy
         let globalMergedWorktreeAction = global.mergedWorktreeAction
         let gitClient = gitClient
-        return .run { send in
-          // Folders don't expose the general settings page, so skip
-          // the git-only queries (`isBareRepository`, `branchRefs`,
-          // `automaticWorktreeBaseRef`) that would otherwise log
-          // subprocess warnings against a non-git directory.
-          guard isGitRepository else {
+        let obsidianVaultClient = obsidianVaultClient
+        // Local folders only; only a hit is sent, so code repos see no extra action.
+        let detectVault: Effect<Action> =
+          state.host == nil
+          ? .run { send in
+            guard await obsidianVaultClient.vaultRoot(rootURL) != nil else { return }
+            await send(.obsidianVaultDetected)
+          }
+          : .none
+        return .merge(
+          detectVault,
+          .run { send in
+            // Folders don't expose the general settings page, so skip
+            // the git-only queries (`isBareRepository`, `branchRefs`,
+            // `automaticWorktreeBaseRef`) that would otherwise log
+            // subprocess warnings against a non-git directory.
+            guard isGitRepository else {
+              await send(
+                .settingsLoaded(
+                  settings,
+                  isBareRepository: false,
+                  globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
+                  globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
+                  globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
+                  globalPullRequestMergeStrategy: globalMergeStrategy,
+                  globalMergedWorktreeAction: globalMergedWorktreeAction
+                )
+              )
+              await send(.branchDataLoaded([], defaultBaseRef: "HEAD"))
+              return
+            }
+            let isBareRepository = (try? await gitClient.isBareRepository(rootURL)) ?? false
             await send(
               .settingsLoaded(
                 settings,
-                isBareRepository: false,
+                isBareRepository: isBareRepository,
                 globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
                 globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
                 globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
@@ -130,34 +161,24 @@ public struct RepositorySettingsFeature {
                 globalMergedWorktreeAction: globalMergedWorktreeAction
               )
             )
-            await send(.branchDataLoaded([], defaultBaseRef: "HEAD"))
-            return
+            let branches: [String]
+            do {
+              branches = try await gitClient.branchRefs(rootURL)
+            } catch {
+              let rootPath = rootURL.path(percentEncoded: false)
+              SupaLogger("Settings").warning(
+                "Branch refs failed for \(rootPath): \(error.localizedDescription)"
+              )
+              branches = []
+            }
+            let defaultBaseRef = await gitClient.automaticWorktreeBaseRef(rootURL) ?? "HEAD"
+            await send(.branchDataLoaded(branches, defaultBaseRef: defaultBaseRef))
           }
-          let isBareRepository = (try? await gitClient.isBareRepository(rootURL)) ?? false
-          await send(
-            .settingsLoaded(
-              settings,
-              isBareRepository: isBareRepository,
-              globalDefaultWorktreeBaseDirectoryPath: globalDefaultWorktreeBaseDirectoryPath,
-              globalCopyIgnoredOnWorktreeCreate: globalCopyIgnored,
-              globalCopyUntrackedOnWorktreeCreate: globalCopyUntracked,
-              globalPullRequestMergeStrategy: globalMergeStrategy,
-              globalMergedWorktreeAction: globalMergedWorktreeAction
-            )
-          )
-          let branches: [String]
-          do {
-            branches = try await gitClient.branchRefs(rootURL)
-          } catch {
-            let rootPath = rootURL.path(percentEncoded: false)
-            SupaLogger("Settings").warning(
-              "Branch refs failed for \(rootPath): \(error.localizedDescription)"
-            )
-            branches = []
-          }
-          let defaultBaseRef = await gitClient.automaticWorktreeBaseRef(rootURL) ?? "HEAD"
-          await send(.branchDataLoaded(branches, defaultBaseRef: defaultBaseRef))
-        }
+        )
+
+      case .obsidianVaultDetected:
+        state.isObsidianVault = true
+        return .none
 
       case .settingsLoaded(
         let settings,

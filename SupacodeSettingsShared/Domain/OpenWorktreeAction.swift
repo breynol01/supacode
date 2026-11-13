@@ -73,6 +73,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
   case intellijEAP
   case kitty
   case nova
+  case obsidian
   case phpstorm
   case pycharm
   case rider
@@ -114,6 +115,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     case .intellijEAP: "IntelliJ IDEA EAP"
     case .kitty: "Kitty"
     case .nova: "Nova"
+    case .obsidian: "Obsidian"
     case .phpstorm: "PhpStorm"
     case .pycharm: "PyCharm"
     case .rider: "Rider"
@@ -143,7 +145,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
   public var canOpenFiles: Bool {
     switch self {
     case .androidStudio, .antigravity, .cursor, .goland, .intellij, .intellijEAP, .nova,
-      .phpstorm, .pycharm, .rider, .rubymine, .rustrover, .trae, .traeCN, .vscode,
+      .obsidian, .phpstorm, .pycharm, .rider, .rubymine, .rustrover, .trae, .traeCN, .vscode,
       .vscodeInsiders, .vscodium, .webstorm, .windsurf, .xcode, .zed, .zedPreview:
       true
     case .alacritty, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup, .ghostty,
@@ -157,8 +159,8 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     case .finder: "Finder"
     case .editor: "$EDITOR"
     case .alacritty, .androidStudio, .antigravity, .cursor, .fork, .githubDesktop, .gitkraken,
-      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm, .pycharm,
-      .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
+      .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .obsidian, .phpstorm,
+      .pycharm, .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
       .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf, .xcode,
       .zed, .zedPreview:
       title
@@ -200,6 +202,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     case .intellijEAP: "intellijEAP"
     case .kitty: "kitty"
     case .nova: "nova"
+    case .obsidian: "obsidian"
     case .phpstorm: "phpstorm"
     case .pycharm: "pycharm"
     case .rider: "rider"
@@ -242,6 +245,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     case .intellijEAP: "com.jetbrains.intellij-EAP"
     case .kitty: "net.kovidgoyal.kitty"
     case .nova: "com.panic.Nova"
+    case .obsidian: "md.obsidian"
     case .phpstorm: "com.jetbrains.PhpStorm"
     case .pycharm: "com.jetbrains.pycharm"
     case .rider: "com.jetbrains.rider"
@@ -273,8 +277,8 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
         .default,
       ]
     case .alacritty, .androidStudio, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop,
-      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .phpstorm,
-      .pycharm, .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
+      .gitkraken, .gitup, .ghostty, .goland, .intellij, .intellijEAP, .kitty, .nova, .obsidian,
+      .phpstorm, .pycharm, .rider, .rubymine, .rustrover, .smartgit, .sourcetree, .sublimeMerge, .terminal,
       .trae, .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .webstorm, .wezterm, .windsurf,
       .zed, .zedPreview:
       [.default]
@@ -303,8 +307,8 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
         .default,
       ]
     case .alacritty, .antigravity, .cursor, .editor, .finder, .fork, .githubDesktop, .gitkraken, .gitup,
-      .ghostty, .kitty, .nova, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae, .traeCN,
-      .vscode, .vscodeInsiders, .vscodium, .warp, .wezterm, .windsurf, .xcode:
+      .ghostty, .kitty, .nova, .obsidian, .smartgit, .sourcetree, .sublimeMerge, .terminal, .trae,
+      .traeCN, .vscode, .vscodeInsiders, .vscodium, .warp, .wezterm, .windsurf, .xcode:
       [.default]
     }
   }
@@ -374,7 +378,29 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
     return "ssh://\(host.sshURLAuthority)\(encodedPath)"
   }
 
+  /// A custom-scheme URL that opens `path` in this app, or `nil` when the app
+  /// opens paths directly. Obsidian needs its scheme: handing it a file URL
+  /// opens the note outside its vault, while `obsidian://open?path=` switches
+  /// to the owning vault (or opens the vault itself for its root folder).
+  public func urlSchemeTarget(forPath path: String) -> URL? {
+    switch self {
+    case .obsidian:
+      // Strict encoding: `URLQueryItem` leaves `+` bare, which a form-style
+      // query parser reads back as a space.
+      guard let encodedPath = path.addingPercentEncoding(withAllowedCharacters: Self.strictQueryValueAllowed)
+      else { return nil }
+      return URL(string: "obsidian://open?path=\(encodedPath)")
+    default:
+      return nil
+    }
+  }
+
   public static let automaticSettingsID = "auto"
+
+  /// RFC 3986 unreserved characters plus `/`, so path separators stay readable.
+  private static let strictQueryValueAllowed = CharacterSet(
+    charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~/"
+  )
 
   public static let editorPriority: [OpenWorktreeAction] = [
     .cursor,
@@ -419,7 +445,7 @@ public nonisolated enum OpenWorktreeAction: CaseIterable, Identifiable, Hashable
   public static let defaultPriority: [OpenWorktreeAction] =
     editorPriority + [.xcode, .finder] + terminalPriority + gitClientPriority
   public static let menuOrder: [OpenWorktreeAction] =
-    editorPriority + [.xcode] + [.finder] + terminalPriority + gitClientPriority + [.editor]
+    editorPriority + [.xcode, .obsidian] + [.finder] + terminalPriority + gitClientPriority + [.editor]
 
   public static func normalizedDefaultEditorID(
     _ settingsID: String?,
