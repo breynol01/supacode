@@ -566,6 +566,9 @@ extension RepositoriesFeature.Action {
     // Deeplink / CLI appearance update mutates the same fields as the sheet save.
     case .setWorktreeAppearance:
       return .allSidebar
+    // Folder assignment regroups the bucket's rows.
+    case .setWorktreesFolder:
+      return .allSidebar
     case .worktreeCustomization:
       return []
 
@@ -628,7 +631,7 @@ extension RepositoriesFeature.Action {
       .fileExplorer,
       .delayedPullRequestRefresh,
       .openRepositorySettings, .requestCustomizeRepository,
-      .requestCustomizeWorktree,
+      .requestCustomizeWorktree, .requestNewWorktreeFolder,
       .requestRenameBranch,
       .contextMenuOpenWorktree,
       .worktreeCreationPrompt,
