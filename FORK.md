@@ -22,6 +22,7 @@ A local `pre-push` hook (`.git/hooks/pre-push`, not versioned) blocks pushes tha
 
 ## Fork changes
 - `fork/tooling`: this file plus `.fork/`.
+  - `sync.sh` signs builds with the local `Apple Development` identity when the keychain has one. Ad-hoc signatures change every rebuild, so macOS drops privacy grants (the repeating "access files in your Documents folder" prompt). Set `XCODEBUILD_FLAGS` to override. One-time per machine: let codesign use the key without a prompt (`security set-key-partition-list -S apple-tool:,apple:,codesign: -s ~/Library/Keychains/login.keychain-db`, asks for the login password); otherwise codesign fails with `errSecInternalComponent`.
 - `fork/no-auto-update`: Sparkle never checks or installs, so an upstream release can't replace the fork build.
 - `fork/browser-pane`: a `browser` `ContentKind` (`supacode/Features/Browser/BrowserContent.swift`). WKWebView on the default persistent data store, so one sign-in is shared across worktrees. Adds `--url` on `supacode tab new` / `pane split`, the `url=` deeplink param, and "Open Browser in Split" (⌘⇧L). It plugs into upstream's `TabContent` / `TabContentToolbar` / `TabChrome` protocols. Upstream wants a browser too (issue #500); prefer their design if they ship one.
 - `fork/background-work`: a sidebar hourglass, and the row counts as Active, when an idle Claude session still has background shell commands running.
