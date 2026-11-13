@@ -105,7 +105,15 @@ reset_ghostty_patch_files() {
   while IFS= read -r f; do
     [ -n "${f}" ] && files+=("${f}")
   done < <(ghostty_patch_files "$1")
-  [ "${#files[@]}" -eq 0 ] || git -C "${ghostty_dir}" checkout -- "${files[@]}" 2>/dev/null || true
+  # A path the pin doesn't track was created by the patch: delete it rather than
+  # check it out, so one new file can't fail the checkout of the others.
+  for f in ${files[@]+"${files[@]}"}; do
+    if git -C "${ghostty_dir}" cat-file -e "HEAD:${f}" 2>/dev/null; then
+      git -C "${ghostty_dir}" checkout -- "${f}" 2>/dev/null || true
+    else
+      rm -f "${ghostty_dir}/${f}"
+    fi
+  done
 }
 
 apply_ghostty_patches() {
@@ -135,7 +143,13 @@ apply_ghostty_patches() {
 revert_ghostty_patches() {
   [ -d "${ghostty_patches_dir}" ] || return 0
   local patch
-  for patch in "${ghostty_patches_dir}"/*.patch; do
+  # Reverse of apply order: a later patch may build on an earlier one's context
+  # (several touch src/Surface.zig), so unwinding forward fails the reverse check.
+  local patches=()
+  while IFS= read -r patch; do
+    [ -n "${patch}" ] && patches+=("${patch}")
+  done < <(ls -1 "${ghostty_patches_dir}"/*.patch 2>/dev/null | sort -r)
+  for patch in ${patches[@]+"${patches[@]}"}; do
     [ -e "${patch}" ] || continue
     # Prefer a clean reverse-apply; fall back to resetting just the patched files.
     # The fallback also guards against `set -e` aborting the trap mid-revert if the
