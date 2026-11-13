@@ -28,6 +28,27 @@ done
 log() { echo "[fork-sync] $*"; }
 logfile() { echo "/tmp/fork-sync-$(basename "$FORK_REPO")-$1.log"; }
 
+# Sign with the local Apple Development identity when present. An ad-hoc
+# signature changes on every rebuild, so macOS forgets privacy grants (the
+# Documents-folder prompt) after each sync; a certificate signature is stable.
+# The team ID is read from the local cert so it never lands in this repo.
+# One-time setup: the key's access list must allow codesign (see FORK.md).
+if [ -z "${XCODEBUILD_FLAGS:-}" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q '"Apple Development:'; then
+  team="$(security find-certificate -c "Apple Development:" -p 2>/dev/null \
+    | openssl x509 -noout -subject -nameopt multiline 2>/dev/null \
+    | awk -F' = ' '/organizationalUnitName/{print $2; exit}')"
+  probe="$(mktemp -t fork-sign-probe)"; cp /usr/bin/true "$probe"
+  if [ -z "$team" ]; then
+    log "WARNING: no team ID in the Apple Development cert; building ad-hoc"
+  elif ! codesign --force --sign "Apple Development" "$probe" >/dev/null 2>&1; then
+    log "WARNING: codesign can't use the Apple Development key (see FORK.md); building ad-hoc"
+  else
+    export XCODEBUILD_FLAGS="CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Development\" DEVELOPMENT_TEAM=$team"
+    log "signing with Apple Development identity"
+  fi
+  rm -f "$probe"
+fi
+
 # Preflight.
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then log "working tree has changes; commit or stash first"; exit 1; fi
 if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || [ -d "$(git rev-parse --git-dir)/rebase-merge" ]; then
