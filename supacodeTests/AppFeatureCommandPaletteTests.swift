@@ -638,7 +638,8 @@ struct AppFeatureCommandPaletteTests {
         repositoryID: repository.id,
         defaultName: "feature/old",
         title: "",
-        color: nil
+        color: nil,
+        supportsFolder: true
       )
     }
   }

@@ -55,6 +55,34 @@ struct WorktreeCustomizationFeatureTests {
     )
   }
 
+  @Test func saveNormalizesFolderWhenSupported() async {
+    var state = makeState()
+    state.supportsFolder = true
+    state.folder = "  ios/widgets "
+    let store = TestStore(initialState: state) {
+      WorktreeCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(
+        .save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil, folder: "ios widgets")
+      ))
+  }
+
+  @Test func saveForwardsNilFolderWhenUnsupported() async {
+    var state = makeState()
+    state.folder = "Widgets"
+    let store = TestStore(initialState: state) {
+      WorktreeCustomizationFeature()
+    }
+
+    await store.send(.saveButtonTapped)
+    await store.receive(
+      .delegate(.save(worktreeID: "wt-1", repositoryID: "/tmp/repo", title: nil, color: nil, folder: nil))
+    )
+  }
+
   @Test func cancelDelegatesCancel() async {
     let store = TestStore(initialState: makeState()) {
       WorktreeCustomizationFeature()

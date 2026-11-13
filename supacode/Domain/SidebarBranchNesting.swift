@@ -45,6 +45,26 @@ enum SidebarBranchNesting {
       case .groupHeader(let prefix, _, _, _, _): "group:\(prefix)"
       }
     }
+
+    /// Whether this row is a user-defined folder header (as opposed to a
+    /// branch-prefix group or a leaf).
+    var isFolderHeader: Bool {
+      if case .groupHeader(let prefix, _, _, _, _) = self { return SidebarBranchNesting.isFolderPrefix(prefix) }
+      return false
+    }
+  }
+
+  /// Namespace for user-folder header prefixes. `:` is illegal in git ref
+  /// names, so a branch-derived prefix can never collide with a folder
+  /// prefix, and a folder named `fix` stays distinct from the `fix/` group.
+  static let folderPrefixNamespace = "folder:"
+
+  static func folderPrefix(_ folder: String) -> String {
+    folderPrefixNamespace + folder
+  }
+
+  static func isFolderPrefix(_ prefix: String) -> Bool {
+    prefix.hasPrefix(folderPrefixNamespace) && !prefix.contains("/")
   }
 
   /// Indicator union for a collapsed group header. Empty when the
@@ -87,10 +107,18 @@ enum SidebarBranchNesting {
   /// components are treated case-sensitively because git refs themselves are
   /// case-sensitive: `Feature/x` and `feature/x` are distinct branches and
   /// must group separately.
+  ///
+  /// `folders` maps rows to a user-defined folder. Each folder renders as a
+  /// top-level header (always, even with a single member; never merged into a
+  /// branch chain), sorted alphabetically ahead of un-foldered rows; its
+  /// collapse key is `folderPrefix(name)`. When `nestByBranch` is false,
+  /// branch names are not split, so only folder headers are produced.
   static func buildRows(
     itemIDs: [SidebarItemID],
     branchNames: [SidebarItemID: String],
-    collapsedPrefixes: Set<String>
+    collapsedPrefixes: Set<String>,
+    folders: [SidebarItemID: String] = [:],
+    nestByBranch: Bool = true
   ) -> [Row] {
     guard !itemIDs.isEmpty else { return [] }
 
@@ -105,13 +133,49 @@ enum SidebarBranchNesting {
     }
 
     var node = PathNode()
+    var folderNodes: [String: PathNode] = [:]
     for id in sortedIDs {
       let raw = branchNames[id] ?? ""
-      let parts = raw.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-      node.insert(id: id, components: parts)
+      let parts: [String] =
+        nestByBranch
+        ? raw.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        : (raw.isEmpty ? [] : [raw])
+      if let folder = folders[id] {
+        folderNodes[folder, default: PathNode()].insert(id: id, components: parts)
+      } else {
+        node.insert(id: id, components: parts)
+      }
     }
 
     var rows: [Row] = []
+    let sortedFolders = folderNodes.keys.sorted {
+      $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+    }
+    for folder in sortedFolders {
+      guard let folderNode = folderNodes[folder] else { continue }
+      let prefix = folderPrefix(folder)
+      let isCollapsed = collapsedPrefixes.contains(prefix)
+      var descendants: [SidebarItemID] = []
+      folderNode.collectLeafIDs(into: &descendants)
+      rows.append(
+        .groupHeader(
+          prefix: prefix,
+          components: [folder],
+          depth: 0,
+          isCollapsed: isCollapsed,
+          leafDescendantIDs: descendants
+        )
+      )
+      if !isCollapsed {
+        folderNode.emit(
+          depth: 1,
+          pathFromRoot: [prefix],
+          pathFromAncestorHeader: [],
+          collapsedPrefixes: collapsedPrefixes,
+          into: &rows
+        )
+      }
+    }
     node.emit(
       depth: 0,
       pathFromRoot: [],
@@ -165,13 +229,18 @@ enum SidebarBranchNesting {
   /// uncollapse any ancestor prefix that would otherwise leave the selected
   /// row hidden, and by the persistence pruner to drop dead prefixes after
   /// a worktree is removed. Case-sensitive because git refs are.
-  static func ancestorPrefixes(of branchName: String) -> [String] {
+  ///
+  /// With a `folder`, the result is the folder's own header prefix followed by
+  /// the branch prefixes namespaced under it (matching `buildRows`).
+  static func ancestorPrefixes(of branchName: String, folder: String? = nil) -> [String] {
     let parts = branchName.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-    guard parts.count > 1 else { return [] }
     var result: [String] = []
-    result.reserveCapacity(parts.count - 1)
+    if let folder { result.append(folderPrefix(folder)) }
+    guard parts.count > 1 else { return result }
+    result.reserveCapacity(result.count + parts.count - 1)
+    let root = folder.map { [folderPrefix($0)] } ?? []
     for end in 1..<parts.count {
-      result.append(parts[..<end].joined(separator: "/"))
+      result.append((root + parts[..<end]).joined(separator: "/"))
     }
     return result
   }
