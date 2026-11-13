@@ -203,17 +203,28 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// Optional user-supplied tint applied to the sidebar row title.
     /// `nil` means "default styling".
     var color: RepositoryColor?
+    /// Optional user-defined sidebar folder the row is grouped under inside
+    /// its repository section. `nil` means "not in a folder". Always stored
+    /// normalized (see `SidebarFolderName.normalized`).
+    var folder: String?
 
     private enum CodingKeys: String, CodingKey {
       case archivedAt
       case title
       case color
+      case folder
     }
 
-    init(archivedAt: Date? = nil, title: String? = nil, color: RepositoryColor? = nil) {
+    init(
+      archivedAt: Date? = nil,
+      title: String? = nil,
+      color: RepositoryColor? = nil,
+      folder: String? = nil
+    ) {
       self.archivedAt = archivedAt
       self.title = title
       self.color = color
+      self.folder = folder
     }
 
     init(from decoder: any Decoder) throws {
@@ -224,6 +235,11 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // that doesn't understand `.custom`, hand-edit, etc.) drops just
       // this field rather than killing the row's entire entry.
       self.color = (try? container.decodeIfPresent(RepositoryColor.self, forKey: .color)) ?? nil
+      // Re-normalize so a hand-edited value (slashes, whitespace) can't
+      // produce an invalid folder header.
+      self.folder = SidebarFolderName.normalized(
+        (try? container.decodeIfPresent(String.self, forKey: .folder)) ?? nil
+      )
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -233,6 +249,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // stays clean for worktrees the user never touched.
       try container.encodeIfPresent(title, forKey: .title)
       try container.encodeIfPresent(color, forKey: .color)
+      try container.encodeIfPresent(folder, forKey: .folder)
     }
   }
 
@@ -298,6 +315,25 @@ nonisolated extension SidebarState {
   /// Whether `worktreeID` sits in the archived bucket. Not a proxy for "on
   /// screen": collapsed or failed repositories render no rows, and an archived
   /// worktree re-enters the sidebar while its delete script runs.
+  /// Distinct folder names used by any row (archived included) in
+  /// `repositoryID`, sorted case-insensitively. Backs the folder pickers.
+  func folderNames(in repositoryID: Repository.ID) -> [String] {
+    guard let section = sections[repositoryID] else { return [] }
+    var names: Set<String> = []
+    for bucket in section.buckets.values {
+      for item in bucket.items.values {
+        if let folder = item.folder { names.insert(folder) }
+      }
+    }
+    return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+  }
+
+  /// The sidebar folder `worktreeID` is assigned to, wherever it is bucketed.
+  func folder(of worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> String? {
+    guard let bucket = currentBucket(of: worktreeID, in: repositoryID) else { return nil }
+    return sections[repositoryID]?.buckets[bucket]?.items[worktreeID]?.folder
+  }
+
   func isArchived(_ worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> Bool {
     sections[repositoryID]?.buckets[.archived]?.items[worktreeID] != nil
   }
@@ -430,6 +466,24 @@ nonisolated extension SidebarState {
     var item = bucket.items[worktreeID] ?? .init()
     item.title = title
     item.color = color
+    bucket.items[worktreeID] = item
+    section.buckets[destinationBucket] = bucket
+    sections[repositoryID] = section
+  }
+
+  /// Assign `worktreeID` to the sidebar folder `folder` (normalized; `nil` or
+  /// blank clears it), falling back to `.unpinned` when the row hasn't been
+  /// seeded yet. Leaves title / color and bucket placement untouched.
+  mutating func setFolder(
+    _ folder: String?,
+    worktree worktreeID: Worktree.ID,
+    in repositoryID: Repository.ID
+  ) {
+    let destinationBucket = currentBucket(of: worktreeID, in: repositoryID) ?? .unpinned
+    var section = sections[repositoryID] ?? .init()
+    var bucket = section.buckets[destinationBucket] ?? .init()
+    var item = bucket.items[worktreeID] ?? .init()
+    item.folder = SidebarFolderName.normalized(folder)
     bucket.items[worktreeID] = item
     section.buckets[destinationBucket] = bucket
     sections[repositoryID] = section
@@ -569,5 +623,16 @@ nonisolated extension SidebarState {
     } else {
       bucket.items[worktreeID] = item
     }
+  }
+}
+
+/// Normalization and validation for user-defined sidebar folder names.
+nonisolated enum SidebarFolderName {
+  /// Trims whitespace and replaces `/` (the grouping path separator) with a
+  /// space. Returns `nil` for blank input, meaning "no folder".
+  static func normalized(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    let cleaned = raw.replacing("/", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    return cleaned.isEmpty ? nil : cleaned
   }
 }

@@ -706,7 +706,7 @@ struct AppFeature {
       // re-send as above, gated to folders so git worktree renames (never
       // shown in settings) stay cheap.
       case .repositories(
-        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _))))
+        .worktreeCustomization(.presented(.delegate(.save(_, let repositoryID, let title, _, _))))
       ),
         .repositories(.setWorktreeAppearance(_, let repositoryID, let title, _)):
         guard state.repositories.repositories[id: repositoryID]?.isGitRepository == false

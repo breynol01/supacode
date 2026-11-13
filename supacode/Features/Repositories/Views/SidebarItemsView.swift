@@ -75,14 +75,18 @@ private struct SidebarItemGroupView: View {
 
   var body: some View {
     let bucketID = moveBehavior.bucketID
-    let groupingActive = nestWorktreesByBranch && bucketID != nil
+    let folders: [SidebarItemID: String] =
+      bucketID.map { store.state.sidebarFolders(for: rowIDs, repositoryID: repository.id, bucket: $0) } ?? [:]
+    let groupingActive = bucketID != nil && (nestWorktreesByBranch || !folders.isEmpty)
     let nestedBranchRows: [SidebarBranchNesting.Row] =
       if groupingActive, let bucketID {
         SidebarBranchNesting.buildRows(
           itemIDs: rowIDs,
           branchNames: branchNames(for: rowIDs),
           collapsedPrefixes: store.state.sidebar.sections[repository.id]?.buckets[bucketID]?
-            .collapsedBranchPrefixes ?? []
+            .collapsedBranchPrefixes ?? [],
+          folders: folders,
+          nestByBranch: nestWorktreesByBranch
         )
       } else {
         rowIDs.map { .leaf(id: $0, depth: 0, displayName: nil) }
@@ -262,6 +266,7 @@ private struct SidebarPathGroupHeaderRow: View {
 
   var body: some View {
     let label = components.isEmpty ? prefix : components.joined(separator: "/")
+    let isFolder = SidebarBranchNesting.isFolderPrefix(prefix)
     Button {
       _ = withAnimation(.easeOut(duration: 0.2)) {
         store.send(
@@ -285,6 +290,11 @@ private struct SidebarPathGroupHeaderRow: View {
             .trailing, SidebarNestLayout.leadingSlotWidth - SidebarNestLayout.groupChevronWidth
           )
           .accessibilityHidden(true)
+        if isFolder {
+          Image(systemName: isCollapsed ? "folder" : "folder.fill")
+            .foregroundStyle(.secondary)
+            .accessibilityHidden(true)
+        }
         Text(label)
           .appFont(.body)
           .lineLimit(1)
@@ -301,7 +311,7 @@ private struct SidebarPathGroupHeaderRow: View {
     .listRowInsets(.vertical, 6)
     .moveDisabled(true)
     .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")
-    .accessibilityLabel("\(label) group, \(isCollapsed ? "collapsed" : "expanded")")
+    .accessibilityLabel("\(label) \(isFolder ? "folder" : "group"), \(isCollapsed ? "collapsed" : "expanded")")
   }
 }
 
@@ -711,6 +721,8 @@ private struct SidebarItemContextMenu: View {
       }
     }
 
+    folderActions(contextRows: contextRows, isBulkSelection: isBulkSelection)
+
     archiveAndDeleteActions(
       contextRows: contextRows,
       isBulkSelection: isBulkSelection,
@@ -718,6 +730,47 @@ private struct SidebarItemContextMenu: View {
       archiveShortcut: archiveShortcut,
       deleteShortcut: deleteShortcut
     )
+  }
+
+  /// "Move to Folder" submenu. Offered when every selected row is a non-main,
+  /// settled git worktree in this row's repository (folders are per repository).
+  @ViewBuilder
+  private func folderActions(contextRows: [SidebarContextRow], isBulkSelection: Bool) -> some View {
+    let eligible = contextRows.allSatisfy {
+      $0.kind == .gitWorktree && !$0.isMainWorktree && !$0.lifecycle.isPending
+        && $0.repositoryID == repositoryID
+    }
+    if eligible, !contextRows.isEmpty {
+      let ids = contextRows.map(\.id)
+      let sidebar = store.sidebar
+      let folderNames = sidebar.folderNames(in: repositoryID)
+      let currentFolders = Set(ids.map { sidebar.folder(of: $0, in: repositoryID) })
+      let sharedFolder: String? = currentFolders.count == 1 ? currentFolders.first ?? nil : nil
+      Menu("Move to Folder", systemImage: "folder") {
+        ForEach(folderNames, id: \.self) { name in
+          Button(name) {
+            store.send(.setWorktreesFolder(ids, repositoryID, folder: name))
+          }
+          .disabled(name == sharedFolder)
+          .help("Group in the \(name) sidebar folder")
+        }
+        if !folderNames.isEmpty { Divider() }
+        if !isBulkSelection {
+          Button("New Folder…", systemImage: "folder.badge.plus") {
+            store.send(.requestNewWorktreeFolder(rowID, repositoryID))
+          }
+          .help("Create a sidebar folder and move this worktree into it")
+        }
+        if currentFolders.contains(where: { $0 != nil }) {
+          Button("Remove from Folder", systemImage: "folder.badge.minus") {
+            store.send(.setWorktreesFolder(ids, repositoryID, folder: nil))
+          }
+          .help("Take the selection out of its sidebar folder")
+        }
+      }
+      .help("Group worktrees under a named sidebar folder")
+      Divider()
+    }
   }
 
   @ViewBuilder
