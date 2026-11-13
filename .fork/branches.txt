@@ -3,3 +3,4 @@ fork/tooling
 fork/no-auto-update
 fork/browser-pane
 fork/background-work
+fork/ghostty-renderer-fixes
