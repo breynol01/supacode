@@ -73,7 +73,8 @@ enum SidebarActiveClassification: Int, CaseIterable, Comparable, Sendable {
     return classify(
       hasUnread: state.hasUnseenNotifications,
       hasAwaiting: state.hasAgentAwaitingInput,
-      hasAgent: !state.agents.isEmpty,
+      // An idle agent still waiting on background work keeps the row Active.
+      hasAgent: !state.agents.isEmpty || !state.agentSnapshot.backgroundCommands.isEmpty,
       hasRunning: !state.runningScripts.isEmpty
     )
   }
