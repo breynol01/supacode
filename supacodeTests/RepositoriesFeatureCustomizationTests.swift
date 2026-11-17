@@ -148,4 +148,169 @@ struct RepositoriesFeatureCustomizationTests {
       $0.repositoryCustomization = nil
     }
   }
+
+  // MARK: - Repository groups.
+
+  @Test func setRepositoriesGroupAssignsAndClears() async {
+    let store = TestStore(initialState: makeInitialState()) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setRepositoriesGroup([repoID], group: "  Music ")) {
+      $0.$sidebar.withLock { $0.sections[self.repoID, default: .init()].group = "Music" }
+      $0.applyPostReduceCacheRecomputes()
+    }
+    #expect(store.state.sidebarStructure.sections.first?.id == .repositoryGroup("Music"))
+
+    await store.send(.setRepositoriesGroup([repoID], group: nil)) {
+      $0.$sidebar.withLock { $0.sections[self.repoID]?.group = nil }
+      $0.applyPostReduceCacheRecomputes()
+    }
+  }
+
+  @Test func setRepositoriesGroupIgnoresUnknownRepositories() async {
+    let store = TestStore(initialState: makeInitialState()) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setRepositoriesGroup(["/tmp/unknown"], group: "Music"))
+  }
+
+  @Test func groupExpansionTogglesCollapseAndRejectsUnknownNames() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock { $0.setGroup("Music", for: [self.repoID]) }
+    initial.applyCacheRecomputes(.all)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.repositoryGroupExpansionChanged(name: "Music", isExpanded: false)) {
+      $0.$sidebar.withLock { _ = $0.collapsedGroups.insert("Music") }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+    #expect(store.state.sidebarStructure.sections.map(\.id) == [.repositoryGroup("Music")])
+
+    await store.send(.repositoryGroupExpansionChanged(name: "Ghost", isExpanded: false))
+
+    await store.send(.repositoryGroupExpansionChanged(name: "Music", isExpanded: true)) {
+      $0.$sidebar.withLock { _ = $0.collapsedGroups.remove("Music") }
+      $0.applyPostReduceCacheRecomputes(.sidebarStructure)
+    }
+  }
+
+  @Test func clearingLastMemberPrunesCollapsedGroup() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock {
+      $0.setGroup("Music", for: [self.repoID])
+      $0.collapsedGroups = ["Music"]
+    }
+    initial.applyCacheRecomputes(.all)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.setRepositoriesGroup([repoID], group: nil)) {
+      $0.$sidebar.withLock {
+        $0.sections[self.repoID]?.group = nil
+        $0.collapsedGroups = []
+      }
+      $0.applyPostReduceCacheRecomputes()
+    }
+  }
+
+  @Test func requestNewRepositoryGroupFocusesGroupField() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock { $0.setGroup("Work", for: ["/tmp/other"]) }
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestNewRepositoryGroup(repoID)) {
+      $0.repositoryCustomization = RepositoryCustomizationFeature.State(
+        repositoryID: self.repoID,
+        defaultName: "customize-repo",
+        title: "",
+        color: nil,
+        existingGroups: ["Work"],
+        focusesGroupOnAppear: true
+      )
+    }
+  }
+
+  @Test func requestNewRepositoryGroupOpensGroupOnlySheetForFolderRepos() async {
+    let store = TestStore(initialState: makeInitialState(isGitRepository: false)) {
+      RepositoriesFeature()
+    }
+
+    await store.send(.requestNewRepositoryGroup(repoID)) {
+      $0.repositoryCustomization = RepositoryCustomizationFeature.State(
+        repositoryID: self.repoID,
+        defaultName: "customize-repo",
+        title: "",
+        color: nil,
+        supportsAppearance: false,
+        focusesGroupOnAppear: true
+      )
+    }
+  }
+
+  @Test func groupOnlySaveLeavesAppearanceUntouched() async {
+    var initial = makeInitialState(isGitRepository: false)
+    initial.repositoryCustomization = RepositoryCustomizationFeature.State(
+      repositoryID: repoID,
+      defaultName: "customize-repo",
+      title: "",
+      color: nil,
+      supportsAppearance: false
+    )
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+
+    await store.send(
+      .repositoryCustomization(
+        .presented(.delegate(.save(repositoryID: repoID, title: nil, color: nil, group: "Music"))))
+    ) {
+      $0.repositoryCustomization = nil
+      $0.$sidebar.withLock { $0.sections[self.repoID, default: .init()].group = "Music" }
+      $0.applyPostReduceCacheRecomputes()
+    }
+    #expect(store.state.sidebar.sections[repoID]?.title == nil)
+  }
+
+  @Test func revealUncollapsesContainingGroup() async {
+    var initial = makeInitialState()
+    let mainID = WorktreeID("\(repoID)/main")
+    initial.$sidebar.withLock {
+      $0.setGroup("Music", for: [self.repoID])
+      $0.collapsedGroups = ["Music"]
+    }
+    initial.selection = .worktree(mainID)
+    initial.applyCacheRecomputes(.all)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.revealSelectedWorktreeInSidebar)
+
+    #expect(store.state.sidebar.collapsedGroups.isEmpty)
+  }
+
+  @Test func expandAllClearsCollapsedGroups() async {
+    var initial = makeInitialState()
+    initial.$sidebar.withLock {
+      $0.setGroup("Music", for: [self.repoID])
+      $0.collapsedGroups = ["Music"]
+    }
+    initial.applyCacheRecomputes(.all)
+    let store = TestStore(initialState: initial) {
+      RepositoriesFeature()
+    }
+    store.exhaustivity = .off(showSkippedAssertions: false)
+
+    await store.send(.setAllSidebarGroupsExpanded(true))
+
+    #expect(store.state.sidebar.collapsedGroups.isEmpty)
+  }
 }
