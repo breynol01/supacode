@@ -483,6 +483,64 @@ struct SidebarStateTests {
     #expect(state.folderNames(in: repoA) == ["Alpha", "beta"])
   }
 
+  // MARK: - Repository groups.
+
+  @Test func sectionGroupRoundTripsAndIsOmittedWhenNil() throws {
+    var state = SidebarState()
+    state.setGroup("Music", for: [repoA])
+    state.collapsedGroups = ["Music"]
+    state.sections[repoB] = .init()
+
+    let data = try JSONEncoder().encode(state)
+    let decoded = try JSONDecoder().decode(SidebarState.self, from: data)
+    #expect(decoded.sections[repoA]?.group == "Music")
+    #expect(decoded.sections[repoB]?.group == nil)
+    #expect(decoded.collapsedGroups == ["Music"])
+
+    let bare = try #require(String(bytes: JSONEncoder().encode(SidebarState()), encoding: .utf8))
+    #expect(!bare.contains("collapsedGroups"))
+    let section = try #require(String(bytes: JSONEncoder().encode(SidebarState.Section()), encoding: .utf8))
+    #expect(!section.contains("group"))
+  }
+
+  @Test func legacyJSONWithoutGroupsDecodes() throws {
+    let data = Data(#"{ "sections": ["/tmp/repo-a", { "collapsed": true, "buckets": [] }] }"#.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.self, from: data)
+    #expect(decoded.sections[repoA]?.group == nil)
+    #expect(decoded.collapsedGroups.isEmpty)
+  }
+
+  @Test func sectionGroupIsNormalizedOnDecode() throws {
+    let data = Data(#"{ "group": "  work/clients  " }"#.utf8)
+    #expect(try JSONDecoder().decode(SidebarState.Section.self, from: data).group == "work clients")
+    let blank = Data(#"{ "group": "   " }"#.utf8)
+    #expect(try JSONDecoder().decode(SidebarState.Section.self, from: blank).group == nil)
+  }
+
+  @Test func setGroupAssignsClearsAndPrunesCollapse() {
+    var state = SidebarState()
+    state.setGroup(" Music ", for: [repoA, repoB])
+    #expect(state.sections[repoA]?.group == "Music")
+    #expect(state.sections[repoB]?.group == "Music")
+    state.collapsedGroups = ["Music"]
+
+    state.setGroup(nil, for: [repoA])
+    #expect(state.sections[repoA]?.group == nil)
+    #expect(state.collapsedGroups == ["Music"])
+
+    state.setGroup("  ", for: [repoB])
+    #expect(state.sections[repoB]?.group == nil)
+    #expect(state.collapsedGroups.isEmpty)
+  }
+
+  @Test func groupNamesAreDistinctAndSorted() {
+    var state = SidebarState()
+    state.setGroup("work", for: [repoA])
+    state.setGroup("Music", for: [repoB])
+    state.setGroup("work", for: ["/tmp/repo-c"])
+    #expect(state.groupNames == ["Music", "work"])
+  }
+
   // MARK: - Archive / unarchive customization carry.
 
   @Test func archiveCarriesTitleAndColorFromSourceBucket() {

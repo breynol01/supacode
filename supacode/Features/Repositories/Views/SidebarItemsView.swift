@@ -321,7 +321,7 @@ private struct SidebarPathGroupHeaderRow: View {
 /// tool storm on one row only invalidates this view (not the surrounding row
 /// chrome). Aggregation itself delegates to the tested pure function in
 /// `SidebarBranchNesting` so there is one algorithm and one set of tests.
-private struct SidebarPathGroupAggregatedIndicators: View {
+struct SidebarPathGroupAggregatedIndicators: View {
   @Bindable var parentStore: StoreOf<RepositoriesFeature>
   let leafIDs: [SidebarItemID]
 
@@ -708,6 +708,9 @@ private struct SidebarItemContextMenu: View {
           }
           .help("Edit the SSH server, port, user, or path")
         }
+        // A folder row stands in for its repository section, so it carries
+        // the repository-group menu that git repos get on their header.
+        SidebarRepositoryGroupMenu(repositoryIDs: [repositoryID], store: store)
         Divider()
       } else if let singleRow = contextRows.first,
         !singleRow.isMainWorktree,
