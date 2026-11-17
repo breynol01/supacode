@@ -7,6 +7,12 @@ Durable facts and records of completed work. Historical; for current policy, `AG
 - Policy: follow upstream **releases only** (`v*`). The fork stays public, guarded by a local pre-push hook. GitHub Actions is disabled on the fork.
 - Release sync is automated (`FORK.md`). The full pipeline (3842 tests) and the rerere conflict replay were both verified.
 
+## 2026-11-17: sidebar repository groups
+- Added `fork/sidebar-groups`: repos can be tagged with a group (e.g. Work / Personal / Music) and render under collapsible headers. Design: `docs/superpowers/specs/2026-11-17-sidebar-project-groups-design.md` on that branch.
+- Called "Group" in code and UI because "folder" already means two things: a non-git directory opened as a project (`SidebarStructure.Section.folder`) and the worktree folders from `fork/sidebar-folders`.
+- Groups sort A-Z with ungrouped repos last; there is no manual group order. A group is a tag on each repo, not a container, so the persisted repo order and `.repositoriesMoved` are unchanged. `SidebarStructure.repositoryMove` only rejects drops that cross a group boundary.
+- Collapsed-group members are dropped from `expandedRepositoryIDs`, so hotkeys and arrow navigation skip them the same way they skip a collapsed repo.
+
 ## Lessons (non-obvious)
 - **Claude Code presence:** Claude reports status itself via OSC 7501 (it probes the terminal at startup) and sends `state=clear` when a turn ends. An idle Claude therefore has *no* presence record. Supacode's Claude hooks were retired upstream (#939), so "Install" in Settings writes no hooks. That's by design.
 - **Daemon-hosted sessions:** resuming can leave a session running under Claude's background daemon. It isn't a child of the tab, its `SUPACODE_SURFACE_ID` is stale, and drag-and-drop images into it fail (they work in a fresh tab).

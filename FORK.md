@@ -30,6 +30,8 @@ A local `pre-push` hook (`.git/hooks/pre-push`, not versioned) blocks pushes tha
   - The probe is injected as `BackgroundWorkClient`; its `testValue` is empty, because the test host is the live app.
   - Known gap: daemon-hosted Claude sessions (`claude daemon` / `bg-spare`) aren't under the tab and their surface ID goes stale. The fallback idea is `~/.claude/sessions/*.json`.
 - `fork/ghostty-renderer-fixes`: upstream Ghostty renderer fixes not yet in Supacode's pin; drop once the pin passes ffaaf5d7a and 3e29fcd62.
+- `fork/sidebar-folders`: user-named folders that group worktrees inside one repository section (`SidebarState.Item.folder`, rendered through `SidebarBranchNesting`). Assigned from "Move to Folder" or the worktree Customize Appearance sheet.
+- `fork/sidebar-groups`: user-named groups that collect repositories under collapsible sidebar headers (`SidebarState.Section.group`, `SidebarState.collapsedGroups`, `SidebarStructure.Section.repositoryGroup`). Assigned from "Move to Group" in the repo "…" menu or a folder row's context menu, or from the Customize Appearance sheet. Drag-reorder stays inside a group. **Stacked on `fork/sidebar-folders`** (it reuses `SidebarFolderName` and the folder header's aggregated indicators), so keep it after that branch in `.fork/branches.txt`; the shared commits rebase to identical patches and merge cleanly.
 
 ## Syncing to a new upstream release
 - Automatic: a launchd agent (`com.breynol01.supacode-fork-check`, Mondays 09:00) runs `.fork/check.sh`. When a new `v*` tag exists, it starts headless Claude with the `supacode-fork-sync` skill and posts a macOS notification with the result. The log is at `~/Library/Logs/supacode-fork-sync.log`.
