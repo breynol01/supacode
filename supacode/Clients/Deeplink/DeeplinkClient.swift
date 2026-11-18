@@ -107,6 +107,12 @@ private nonisolated enum DeeplinkParser {
   /// Parse an explicit-opt-in bool flag: only `<name>=true` returns true, so a
   /// malformed or absent value keeps the safe default. Unrecognized values are
   /// logged and ignored.
+  /// A browser deeplink's `url` value: empty opens a blank page, otherwise
+  /// the same typed-text resolution as the address bar.
+  private static func browserURL(_ raw: String?) -> URL? {
+    raw.flatMap(BrowserURL.resolve)
+  }
+
   private static func parseBoolFlag(_ name: String, from queryItems: [URLQueryItem]) -> Bool {
     guard let item = queryItems.first(where: { $0.name == name }) else { return false }
     if item.value == "true" { return true }
@@ -249,6 +255,10 @@ private nonisolated enum DeeplinkParser {
         logger.warning("Invalid pane surface UUID: \(rawPane ?? "")")
         return nil
       }
+      if let rawURL = queryItems.first(where: { $0.name == "url" }) {
+        return .worktree(
+          id: worktreeID, action: .browserNew(url: Self.browserURL(rawURL.value), id: id, pane: pane))
+      }
       return .worktree(id: worktreeID, action: .tabNew(input: input, id: id, title: title, pane: pane))
     }
 
@@ -378,6 +388,12 @@ private nonisolated enum DeeplinkParser {
       if rawID != nil, id == nil {
         logger.warning("Invalid pane split id: \(rawID ?? "")")
         return nil
+      }
+      if let rawURL = queryItems.first(where: { $0.name == "url" }) {
+        return .worktree(
+          id: worktreeID,
+          action: .browserSplit(token: token, direction: direction, url: Self.browserURL(rawURL.value), id: id)
+        )
       }
       return .worktree(
         id: worktreeID,

@@ -51,6 +51,10 @@ enum Deeplink: Equatable, Sendable {
     /// Split a pane, opening a fresh tab in the new pane. `token` is the pane's
     /// own id or the id of a tab / content it hosts.
     case paneSplit(token: UUID, direction: SplitDirection, input: String?, id: UUID?)
+    /// Open a browser tab (nil URL = blank page), optionally anchored on a pane token.
+    case browserNew(url: URL?, id: UUID?, pane: UUID?)
+    /// Split a pane, opening a browser tab in the new pane.
+    case browserSplit(token: UUID, direction: SplitDirection, url: URL?, id: UUID?)
     case paneDestroy(token: UUID)
     case paneZoom(token: UUID)
     /// Toggle window mode for the pane addressed by `token`.

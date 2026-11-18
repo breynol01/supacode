@@ -329,6 +329,7 @@ struct AppFeature {
     case selectNextTerminalTab
     case selectPreviousTerminalTab
     case splitTerminal(TerminalSplitMenuDirection)
+    case openBrowserSplit
     case jumpToLatestUnread
     case menuBarWorktreeSelected(worktreeID: Worktree.ID)
     case markAllNotificationsRead
@@ -1113,6 +1114,17 @@ struct AppFeature {
         }
         return .run { _ in
           await terminalClient.send(.splitFocusedPane(worktree, direction: direction))
+        }
+
+      case .openBrowserSplit:
+        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
+          !worktree.isMissing
+        else {
+          return .none
+        }
+        return .run { _ in
+          await terminalClient.send(
+            .splitPaneWithBrowser(worktree, paneToken: nil, direction: .horizontal, url: nil))
         }
 
       case .toggleWindowModeForFocusedPane:
@@ -2661,6 +2673,8 @@ struct AppFeature {
     switch action {
     case .run, .runScript, .tabNew, .surfaceSplit, .paneSplit:
       spawnsShell = true
+    case .browserNew, .browserSplit:
+      spawnsShell = false
     case .surface(_, _, let input):
       spawnsShell = input?.isEmpty == false
     case .select, .stop, .stopScript, .tab, .tabRename, .tabDestroy, .surfaceDestroy,
@@ -2885,6 +2899,34 @@ struct AppFeature {
       }
       return awaitingCompletion(
         effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .browserNew(let url, let id, let pane):
+      if let pane, !terminalClient.paneExists(worktreeID, pane) {
+        deeplinkLogger.warning("Rejecting unknown pane anchor \(pane) in worktree \(worktreeID)")
+        return .none
+      }
+      if let id, terminalClient.idExistsAnywhere(id) || Self.hasPendingCreationAck(id: id, state: state) {
+        deeplinkLogger.warning("Rejecting duplicate browser tab id \(id)")
+        return .none
+      }
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .createBrowserTab(worktree, url: url, id: id, focusing: !background, anchor: pane)
+      }
+      return awaitingCompletion(
+        effect, match: id.map { .tabInWorktree(worktreeID: worktreeID, tabID: $0) },
+        responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
+    case .browserSplit(let token, let direction, let url, let id):
+      guard validatePane(worktreeID: worktreeID, token: token, state: &state) else { return .none }
+      if let id, terminalClient.idExistsAnywhere(id) || Self.hasPendingCreationAck(id: id, state: state) {
+        deeplinkLogger.warning("Rejecting duplicate browser split id \(id)")
+        return .none
+      }
+      let effect = sendTerminalCommand(worktreeID: worktreeID, state: &state) { worktree in
+        .splitPaneWithBrowser(
+          worktree, paneToken: token, direction: direction, url: url, id: id, focusing: !background)
+      }
+      return awaitingCompletion(
+        effect, match: id.map { .surfaceSplit(worktreeID: worktreeID, surfaceID: $0) },
         responseFD: responseFD, timeoutSeconds: timeoutSeconds, state: &state)
     case .tabRename(let tabID, let title):
       guard validateTab(worktreeID: worktreeID, tabID: tabID, state: &state) else { return .none }

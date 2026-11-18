@@ -76,6 +76,11 @@ extension TabCommand {
     @Option(name: [.short, .long], help: "Command to run in the new tab.")
     var input: String?
 
+    @Option(
+      name: .customLong("url"),
+      help: "Open a browser at this URL instead of a terminal (empty opens a blank page).")
+    var browserURL: String?
+
     @Option(name: [.short, .customLong("id")], help: "UUID for the new tab.")
     var newID: String?
 
@@ -95,6 +100,9 @@ extension TabCommand {
       if let pane, UUID(uuidString: pane) == nil {
         throw ValidationError("--pane must be a pane, tab, or content UUID.")
       }
+      if input != nil, browserURL != nil {
+        throw ValidationError("--input and --url are mutually exclusive.")
+      }
       try IDResolvers.validateNewID(newID)
       // A new tab has no override to clear, so a blank title would be dropped silently.
       guard let title, title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -111,7 +119,8 @@ extension TabCommand {
             input: input,
             id: resolvedID,
             title: title,
-            pane: pane
+            pane: pane,
+            browserURL: browserURL
           )),
         timeoutSeconds: timeoutOption.timeout
       )
