@@ -263,6 +263,7 @@ private struct SidebarPathGroupHeaderRow: View {
   let isCollapsed: Bool
   let leafDescendantIDs: [SidebarItemID]
   @Bindable var store: StoreOf<RepositoriesFeature>
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   var body: some View {
     let label = components.isEmpty ? prefix : components.joined(separator: "/")
@@ -307,7 +308,7 @@ private struct SidebarPathGroupHeaderRow: View {
       .contentShape(.interaction, .rect)
     }
     .buttonStyle(.plain)
-    .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep)
+    .listRowInsets(.leading, CGFloat(depth) * SidebarNestLayout.indentStep + groupIndent)
     .listRowInsets(.vertical, 6)
     .moveDisabled(true)
     .help(isCollapsed ? "Expand \(label)" : "Collapse \(label)")

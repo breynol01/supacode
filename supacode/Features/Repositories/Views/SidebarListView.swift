@@ -177,9 +177,45 @@ private struct SidebarSectionDispatcher: View {
         shortcutHintByID: shortcutHintByID
       )
       .moveDisabled(true)
-    case .repositoryGroup(let name, let isCollapsed, let leafIDs):
-      SidebarRepositoryGroupHeader(name: name, isCollapsed: isCollapsed, leafIDs: leafIDs, store: store)
-        .moveDisabled(true)
+    case .repositoryGroup(let name, let isCollapsed, let memberCount, let leafIDs):
+      SidebarRepositoryGroupHeader(
+        name: name,
+        isCollapsed: isCollapsed,
+        memberCount: memberCount,
+        leafIDs: leafIDs,
+        store: store
+      )
+      .moveDisabled(true)
+    default:
+      // Repository-backed sections; members of a group render indented.
+      SidebarRepositorySectionView(
+        section: section,
+        structure: structure,
+        shortcutHintByID: shortcutHintByID,
+        store: store,
+        terminalManager: terminalManager
+      )
+      .environment(
+        \.sidebarGroupIndent,
+        SidebarStructure.repositoryID(of: section).flatMap { structure.repositoryGroupByID[$0] } == nil
+          ? 0 : SidebarNestLayout.indentStep
+      )
+    }
+  }
+}
+
+/// Renders one repository-backed section (failed, blocked, folder, git).
+private struct SidebarRepositorySectionView: View {
+  let section: SidebarStructure.Section
+  let structure: SidebarStructure
+  let shortcutHintByID: [Worktree.ID: String]
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    switch section {
+    case .placeholder, .highlight, .repositoryGroup:
+      EmptyView()
     case .failedRepository(let repositoryID, let rootURL, let customTitle, let color, let isRemote):
       SidebarFailedRepositorySection(
         repositoryID: repositoryID,
@@ -295,6 +331,7 @@ private struct SidebarHoistSummaryRow: View {
   let repositoryName: String
   let summary: SidebarHoistSummary
   let store: StoreOf<RepositoriesFeature>
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   var body: some View {
     Button {
@@ -315,7 +352,7 @@ private struct SidebarHoistSummaryRow: View {
       .contentShape(.interaction, .rect)
     }
     .buttonStyle(.plain)
-    .listRowInsets(.leading, 0)
+    .listRowInsets(.leading, groupIndent)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 4)
     .moveDisabled(true)
