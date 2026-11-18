@@ -10,6 +10,17 @@ struct RepositoryCustomizationFeature {
     let defaultName: String
     var title: String
     var color: RepositoryColor?
+    /// Whether the sheet offers Title / Color. `false` for folder-kind
+    /// repositories, whose appearance lives on their row, so the sheet only
+    /// edits the group.
+    var supportsAppearance: Bool = true
+    /// Sidebar group input; blank means "ungrouped".
+    var group: String = ""
+    /// Group names already in use, offered as suggestions.
+    var existingGroups: [String] = []
+    /// Focus the Group field instead of Title when the sheet appears
+    /// ("New Group…" from the menu).
+    var focusesGroupOnAppear: Bool = false
   }
 
   enum Action: BindableAction, Equatable {
@@ -22,7 +33,7 @@ struct RepositoryCustomizationFeature {
   @CasePathable
   enum Delegate: Equatable {
     case cancel
-    case save(repositoryID: Repository.ID, title: String?, color: RepositoryColor?)
+    case save(repositoryID: Repository.ID, title: String?, color: RepositoryColor?, group: String? = nil)
   }
 
   var body: some Reducer<State, Action> {
@@ -44,7 +55,8 @@ struct RepositoryCustomizationFeature {
             .save(
               repositoryID: state.repositoryID,
               title: resolvedTitle,
-              color: state.color
+              color: state.color,
+              group: SidebarFolderName.normalized(state.group)
             )
           )
         )
