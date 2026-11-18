@@ -378,6 +378,115 @@ struct SidebarBranchNestingTests {
     )
   }
 
+  // MARK: - SidebarBranchNesting.buildRows: user folders.
+
+  @Test func singleMemberFolderAlwaysRendersHeaderAheadOfRootRows() {
+    let rows = SidebarBranchNesting.buildRows(
+      itemIDs: ["/wt/a", "/wt/w"],
+      branchNames: ["/wt/a": "alpha", "/wt/w": "feat/widgets"],
+      collapsedPrefixes: [],
+      folders: ["/wt/w": "iOS widgets"]
+    )
+    #expect(
+      rows == [
+        .groupHeader(
+          prefix: "folder:iOS widgets",
+          components: ["iOS widgets"],
+          depth: 0,
+          isCollapsed: false,
+          leafDescendantIDs: ["/wt/w"]
+        ),
+        .leaf(id: "/wt/w", depth: 1, displayName: "feat/widgets"),
+        .leaf(id: "/wt/a", depth: 0, displayName: nil),
+      ]
+    )
+    #expect(rows[0].isFolderHeader)
+  }
+
+  @Test func branchPrefixesNestInsideFolderWithNamespacedPrefix() {
+    let rows = SidebarBranchNesting.buildRows(
+      itemIDs: ["/wt/a", "/wt/b", "/wt/c"],
+      branchNames: ["/wt/a": "fix/a", "/wt/b": "fix/b", "/wt/c": "fix/c"],
+      collapsedPrefixes: [],
+      folders: ["/wt/a": "fix", "/wt/b": "fix"]
+    )
+    #expect(
+      rows == [
+        .groupHeader(
+          prefix: "folder:fix",
+          components: ["fix"],
+          depth: 0,
+          isCollapsed: false,
+          leafDescendantIDs: ["/wt/a", "/wt/b"]
+        ),
+        .groupHeader(
+          prefix: "folder:fix/fix",
+          components: ["fix"],
+          depth: 1,
+          isCollapsed: false,
+          leafDescendantIDs: ["/wt/a", "/wt/b"]
+        ),
+        .leaf(id: "/wt/a", depth: 2, displayName: "a"),
+        .leaf(id: "/wt/b", depth: 2, displayName: "b"),
+        .leaf(id: "/wt/c", depth: 0, displayName: nil),
+      ]
+    )
+    #expect(!rows[1].isFolderHeader)
+  }
+
+  @Test func nestingOffKeepsFolderHeadersButFlattensBranches() {
+    let rows = SidebarBranchNesting.buildRows(
+      itemIDs: ["/wt/a", "/wt/b", "/wt/c", "/wt/d"],
+      branchNames: ["/wt/a": "fix/a", "/wt/b": "fix/b", "/wt/c": "feat/c", "/wt/d": "feat/d"],
+      collapsedPrefixes: [],
+      folders: ["/wt/a": "Bugs", "/wt/b": "Bugs"],
+      nestByBranch: false
+    )
+    #expect(
+      rows == [
+        .groupHeader(
+          prefix: "folder:Bugs",
+          components: ["Bugs"],
+          depth: 0,
+          isCollapsed: false,
+          leafDescendantIDs: ["/wt/a", "/wt/b"]
+        ),
+        .leaf(id: "/wt/a", depth: 1, displayName: "fix/a"),
+        .leaf(id: "/wt/b", depth: 1, displayName: "fix/b"),
+        .leaf(id: "/wt/c", depth: 0, displayName: nil),
+        .leaf(id: "/wt/d", depth: 0, displayName: nil),
+      ]
+    )
+  }
+
+  @Test func collapsedFolderHidesLeavesAndFoldersSortAlphabetically() {
+    let rows = SidebarBranchNesting.buildRows(
+      itemIDs: ["/wt/a", "/wt/b"],
+      branchNames: ["/wt/a": "a", "/wt/b": "b"],
+      collapsedPrefixes: ["folder:beta"],
+      folders: ["/wt/a": "beta", "/wt/b": "Alpha"]
+    )
+    #expect(
+      rows == [
+        .groupHeader(
+          prefix: "folder:Alpha",
+          components: ["Alpha"],
+          depth: 0,
+          isCollapsed: false,
+          leafDescendantIDs: ["/wt/b"]
+        ),
+        .leaf(id: "/wt/b", depth: 1, displayName: "b"),
+        .groupHeader(
+          prefix: "folder:beta",
+          components: ["beta"],
+          depth: 0,
+          isCollapsed: true,
+          leafDescendantIDs: ["/wt/a"]
+        ),
+      ]
+    )
+  }
+
   // MARK: - SidebarBranchNesting.aggregateIndicators.
 
   @Test func aggregatedIndicators_emptyLeavesReturnsEmpty() {

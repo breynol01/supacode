@@ -609,6 +609,10 @@ struct RepositoriesFeature {
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
+    /// Opens the worktree customization sheet with the Folder field focused.
+    case requestNewWorktreeFolder(Worktree.ID, Repository.ID)
+    /// Assigns (or, with `nil` / blank, clears) the sidebar folder for rows of one repository.
+    case setWorktreesFolder([Worktree.ID], Repository.ID, folder: String?)
     /// Deeplink / CLI appearance update: overwrites the row's sidebar title and tint.
     /// `nil` clears the field; omit-vs-clear was already resolved upstream in `AppFeature`.
     case setWorktreeAppearance(Worktree.ID, Repository.ID, title: String?, color: RepositoryColor?)
@@ -4182,13 +4186,16 @@ struct RepositoriesFeature {
         // Resolve outside the lock to keep the critical section short.
         let branchName = state.sidebarItems[id: worktreeID]?.branchName
         let containingBucket = state.sidebar.currentBucket(of: worktreeID, in: repositoryID)
+        let folder = containingBucket.flatMap {
+          state.sidebar.sections[repositoryID]?.buckets[$0]?.items[worktreeID]?.folder
+        }
         state.$sidebar.withLock { sidebar in
           sidebar.sections[repositoryID, default: .init()].collapsed = false
           // Uncollapse any ancestor branch prefix so a reveal / deeplink to
           // `feature/tools/api` doesn't leave the row hidden inside a
           // collapsed `feature/tools` group header.
           guard let branchName, let bucketID = containingBucket, bucketID != .archived else { return }
-          let ancestors = Set(SidebarBranchNesting.ancestorPrefixes(of: branchName))
+          let ancestors = Set(SidebarBranchNesting.ancestorPrefixes(of: branchName, folder: folder))
           guard !ancestors.isEmpty,
             var bucket = sidebar.sections[repositoryID]?.buckets[bucketID]
           else { return }
@@ -4827,6 +4834,8 @@ struct RepositoriesFeature {
         return .none
 
       case .requestCustomizeWorktree,
+        .requestNewWorktreeFolder,
+        .setWorktreesFolder,
         .setWorktreeAppearance,
         .worktreeCustomization:
         // Handled by `WorktreeCustomizationParentReducer` below; main switch is at type-checker
@@ -6530,6 +6539,22 @@ extension RepositoriesFeature.State {
     return ids
   }
 
+  /// User-folder assignments for `rowIDs` in one bucket, read from the
+  /// persisted sidebar. Shared by the render path and the hotkey / arrow
+  /// projection so both group rows identically. Empty when no row is foldered.
+  func sidebarFolders(
+    for rowIDs: [SidebarItemID],
+    repositoryID: Repository.ID,
+    bucket: SidebarBucket
+  ) -> [SidebarItemID: String] {
+    guard let items = sidebar.sections[repositoryID]?.buckets[bucket]?.items else { return [:] }
+    var result: [SidebarItemID: String] = [:]
+    for id in rowIDs {
+      if let folder = items[id]?.folder { result[id] = folder }
+    }
+    return result
+  }
+
   /// Projection through `SidebarBranchNesting.buildRows` that drops headers
   /// and (when `ignoreCollapsedGroups == false`) any leaf hidden inside a
   /// collapsed group; falls back to the raw custom-drag order when nesting
@@ -6541,7 +6566,8 @@ extension RepositoriesFeature.State {
     useNesting: Bool,
     ignoreCollapsedGroups: Bool
   ) -> [SidebarItemID] {
-    guard useNesting, !rowIDs.isEmpty else { return rowIDs }
+    let folders = sidebarFolders(for: rowIDs, repositoryID: repositoryID, bucket: bucket)
+    guard useNesting || !folders.isEmpty, !rowIDs.isEmpty else { return rowIDs }
     let collapsedPrefixes: Set<String> =
       ignoreCollapsedGroups
       ? []
@@ -6556,7 +6582,9 @@ extension RepositoriesFeature.State {
     let rows = SidebarBranchNesting.buildRows(
       itemIDs: rowIDs,
       branchNames: branchNames,
-      collapsedPrefixes: collapsedPrefixes
+      collapsedPrefixes: collapsedPrefixes,
+      folders: folders,
+      nestByBranch: useNesting
     )
     return rows.compactMap { row in
       if case .leaf(let id, _, _) = row { return id }
@@ -7237,8 +7265,20 @@ extension RepositoriesFeature.State {
     in section: inout SidebarState.Section,
     worktrees: IdentifiedArrayOf<Worktree>
   ) {
-    let liveBranchNames = Set(worktrees.map(\.name))
-    let coveredPrefixes = Set(liveBranchNames.flatMap(SidebarBranchNesting.ancestorPrefixes(of:)))
+    var coveredPrefixes: Set<String> = []
+    for bucketID in [SidebarState.BucketID.pinned, .unpinned] {
+      let items = section.buckets[bucketID]?.items ?? [:]
+      for worktree in worktrees {
+        // Folder-qualified prefixes are bucket-scoped (the folder lives on the
+        // bucketed Item); plain branch prefixes stay covered in every bucket.
+        coveredPrefixes.formUnion(SidebarBranchNesting.ancestorPrefixes(of: worktree.name))
+        if let folder = items[worktree.id]?.folder {
+          coveredPrefixes.formUnion(
+            SidebarBranchNesting.ancestorPrefixes(of: worktree.name, folder: folder)
+          )
+        }
+      }
+    }
     for bucketID in [SidebarState.BucketID.pinned, .unpinned] {
       guard var bucket = section.buckets[bucketID] else { continue }
       let next = bucket.collapsedBranchPrefixes.intersection(coveredPrefixes)
