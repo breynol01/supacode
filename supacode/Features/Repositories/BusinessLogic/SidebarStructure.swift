@@ -227,9 +227,10 @@ struct SidebarStructure: Equatable, Sendable {
     case highlight(kind: HighlightKind, rowIDs: [Worktree.ID])
     /// Header for a user-defined repository group. Its member repositories
     /// follow as ordinary sections, omitted entirely while collapsed.
-    /// `leafIDs` (populated only while collapsed) feeds the header's
-    /// aggregated indicators.
-    case repositoryGroup(name: String, isCollapsed: Bool, leafIDs: [Worktree.ID])
+    /// `memberCount` is the number of repositories in the group; `leafIDs`
+    /// (populated only while collapsed) feeds the header's aggregated
+    /// indicators.
+    case repositoryGroup(name: String, isCollapsed: Bool, memberCount: Int, leafIDs: [Worktree.ID])
     case repository(repositoryID: Repository.ID, groups: [SidebarItemGroup])
     case folder(repositoryID: Repository.ID, rowID: Worktree.ID)
     case failedRepository(
@@ -253,7 +254,7 @@ struct SidebarStructure: Equatable, Sendable {
     var id: SectionID {
       switch self {
       case .highlight(let kind, _): .highlight(kind)
-      case .repositoryGroup(let name, _, _): .repositoryGroup(name)
+      case .repositoryGroup(let name, _, _, _): .repositoryGroup(name)
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
       case .failedRepository(let repositoryID, _, _, _, _): .failedRepository(repositoryID)
@@ -966,6 +967,7 @@ extension RepositoriesFeature.State {
         .repositoryGroup(
           name: name,
           isCollapsed: isCollapsed,
+          memberCount: members.count,
           leafIDs: isCollapsed ? groupLeafIDs(for: members) : []
         )
       )

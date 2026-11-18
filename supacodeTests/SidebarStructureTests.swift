@@ -2201,7 +2201,8 @@ extension SidebarStructureTests {
     let synthMain = synth.worktrees.first!.id
     let looseMain = loose.worktrees.first!.id
     #expect(
-      structure.sections.first == .repositoryGroup(name: "Music", isCollapsed: true, leafIDs: [synthMain]))
+      structure.sections.first
+        == .repositoryGroup(name: "Music", isCollapsed: true, memberCount: 1, leafIDs: [synthMain]))
     #expect(sectionIDs(in: structure) == [.repositoryGroup("Music"), .repository(loose.id)])
     // Hidden members never get a hotkey slot.
     #expect(structure.slotByID[synthMain] == nil)
@@ -2215,7 +2216,8 @@ extension SidebarStructureTests {
 
     let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
 
-    #expect(structure.sections.first == .repositoryGroup(name: "Music", isCollapsed: false, leafIDs: []))
+    #expect(
+      structure.sections.first == .repositoryGroup(name: "Music", isCollapsed: false, memberCount: 1, leafIDs: []))
   }
 
   @Test func repositoryMoveWithoutGroupsKeepsLegacyMapping() {

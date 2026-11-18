@@ -39,6 +39,7 @@ struct SidebarItemView: View {
   /// Number of group-header ancestors above this row, used by the renderer
   /// to apply a per-level leading indent. `0` keeps the existing baseline.
   var nestDepth: Int = 0
+  @Environment(\.sidebarGroupIndent) private var groupIndent
   /// Non-nil only inside the global Pinned / Active sections.
   var highlightSubtitle: SidebarHighlightRepoTag?
 
@@ -86,7 +87,7 @@ struct SidebarItemView: View {
       )
     }
     .labelStyle(.verticallyCentered)
-    .listRowInsets(.leading, CGFloat(nestDepth) * SidebarNestLayout.indentStep)
+    .listRowInsets(.leading, CGFloat(nestDepth) * SidebarNestLayout.indentStep + groupIndent)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 6)
   }

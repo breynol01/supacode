@@ -9,6 +9,7 @@ import SwiftUI
 struct SidebarRepositoryGroupHeader: View {
   let name: String
   let isCollapsed: Bool
+  let memberCount: Int
   /// Member rows feeding the aggregated indicators; empty while expanded.
   let leafIDs: [Worktree.ID]
   @Bindable var store: StoreOf<RepositoriesFeature>
@@ -33,6 +34,10 @@ struct SidebarRepositoryGroupHeader: View {
             .accessibilityHidden(true)
           Text(name)
             .lineLimit(1)
+          Text(memberCount, format: .number)
+            .foregroundStyle(.tertiary)
+            .monospacedDigit()
+            .accessibilityHidden(true)
           Spacer(minLength: 0)
           if isCollapsed, !leafIDs.isEmpty {
             SidebarPathGroupAggregatedIndicators(parentStore: store, leafIDs: leafIDs)
@@ -43,7 +48,10 @@ struct SidebarRepositoryGroupHeader: View {
       }
       .buttonStyle(.plain)
       .help(isCollapsed ? "Expand \(name)" : "Collapse \(name)")
-      .accessibilityLabel("\(name) group, \(isCollapsed ? "collapsed" : "expanded")")
+      .accessibilityLabel(
+        "\(name) group, \(memberCount) \(memberCount == 1 ? "repository" : "repositories"), "
+          + (isCollapsed ? "collapsed" : "expanded")
+      )
     }
   }
 }
@@ -83,4 +91,10 @@ struct SidebarRepositoryGroupMenu: View {
     }
     .help("Group repositories under a named sidebar header")
   }
+}
+
+extension EnvironmentValues {
+  /// Extra leading inset for rows of a repository rendered inside a
+  /// user-defined group, so membership reads at a glance. `0` outside groups.
+  @Entry var sidebarGroupIndent: CGFloat = 0
 }
