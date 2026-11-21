@@ -265,6 +265,7 @@ struct WorktreeCustomizationParentTests {
         defaultName: "feature/x",
         title: "",
         color: nil,
+        supportsFolder: true,
       )
     }
   }
