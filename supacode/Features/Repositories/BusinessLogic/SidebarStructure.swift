@@ -226,6 +226,12 @@ struct SidebarStructure: Equatable, Sendable {
 
   enum Section: Equatable, Sendable, Identifiable {
     case highlight(kind: HighlightKind, rowIDs: [Worktree.ID])
+    /// Header for a user-defined repository group. Its member repositories
+    /// follow as ordinary sections, omitted entirely while collapsed.
+    /// `memberCount` is the number of repositories in the group; `leafIDs`
+    /// (populated only while collapsed) feeds the header's aggregated
+    /// indicators.
+    case repositoryGroup(name: String, isCollapsed: Bool, memberCount: Int, leafIDs: [Worktree.ID])
     case repository(repositoryID: Repository.ID, groups: [SidebarItemGroup])
     case folder(repositoryID: Repository.ID, rowID: Worktree.ID)
     case failedRepository(
@@ -249,6 +255,7 @@ struct SidebarStructure: Equatable, Sendable {
     var id: SectionID {
       switch self {
       case .highlight(let kind, _): .highlight(kind)
+      case .repositoryGroup(let name, _, _, _): .repositoryGroup(name)
       case .repository(let repositoryID, _): .repository(repositoryID)
       case .folder(let repositoryID, _): .folder(repositoryID)
       case .failedRepository(let repositoryID, _, _, _, _): .failedRepository(repositoryID)
@@ -259,6 +266,7 @@ struct SidebarStructure: Equatable, Sendable {
 
     enum SectionID: Hashable, Sendable {
       case highlight(HighlightKind)
+      case repositoryGroup(String)
       case repository(Repository.ID)
       case folder(Repository.ID)
       case failedRepository(Repository.ID)
@@ -288,6 +296,73 @@ struct SidebarStructure: Equatable, Sendable {
   /// this to translate `.onMove` flat offsets into the index space the
   /// `.repositoriesMoved` reducer action expects.
   var reorderableRepositoryIDs: [Repository.ID]
+  /// User-defined group of each grouped repository. Empty when no repository
+  /// is grouped; drives the group-aware drag translation.
+  var repositoryGroupByID: [Repository.ID: String] = [:]
+
+  /// Repository a section renders, or `nil` for non-repository sections
+  /// (highlights, group headers, the placeholder).
+  static func repositoryID(of section: Section) -> Repository.ID? {
+    switch section {
+    case .repository(let repositoryID, _),
+      .folder(let repositoryID, _),
+      .failedRepository(let repositoryID, _, _, _, _),
+      .environmentBlockedRepository(let repositoryID, _, _, _):
+      repositoryID
+    case .highlight, .repositoryGroup, .placeholder:
+      nil
+    }
+  }
+
+  /// Translates a SwiftUI `.onMove` over the flat `sections` array into the
+  /// `reorderableRepositoryIDs` index space `.repositoriesMoved` expects, or
+  /// `nil` when the move is a no-op or not allowed. Non-repo sections carry
+  /// `.moveDisabled(true)`, so they're never sources. With groups present, a
+  /// drag must stay inside the source group (ungrouped counts as one group):
+  /// the drop lands before a same-group repo below the gap, else after a
+  /// same-group repo above it, else it's rejected.
+  func repositoryMove(offsets: IndexSet, destination: Int) -> (offsets: IndexSet, destination: Int)? {
+    let repoIDs = reorderableRepositoryIDs
+    guard !repoIDs.isEmpty else { return nil }
+    let sectionsCount = sections.count
+    var repoOffsets = IndexSet()
+    var sourceIDs: [Repository.ID] = []
+    for index in offsets.sorted() where index < sectionsCount {
+      guard let repositoryID = Self.repositoryID(of: sections[index]),
+        let repoIndex = repoIDs.firstIndex(of: repositoryID)
+      else { continue }
+      repoOffsets.insert(repoIndex)
+      sourceIDs.append(repositoryID)
+    }
+    guard !repoOffsets.isEmpty else { return nil }
+    let clampedDestination = min(max(destination, 0), sectionsCount)
+
+    guard !repositoryGroupByID.isEmpty else {
+      guard clampedDestination < sectionsCount else { return (repoOffsets, repoIDs.count) }
+      // Dropping above the highlight prefix collapses to "before the first repo".
+      let repoDestination =
+        Self.repositoryID(of: sections[clampedDestination]).map { repoIDs.firstIndex(of: $0) ?? repoIDs.count } ?? 0
+      return (repoOffsets, repoDestination)
+    }
+
+    let sourceGroups = Set(sourceIDs.map { repositoryGroupByID[$0] })
+    guard sourceGroups.count == 1, let sourceGroup = sourceGroups.first else { return nil }
+    if clampedDestination < sectionsCount,
+      let below = Self.repositoryID(of: sections[clampedDestination]),
+      repositoryGroupByID[below] == sourceGroup,
+      let belowIndex = repoIDs.firstIndex(of: below)
+    {
+      return (repoOffsets, belowIndex)
+    }
+    if clampedDestination > 0,
+      let above = Self.repositoryID(of: sections[clampedDestination - 1]),
+      repositoryGroupByID[above] == sourceGroup,
+      let aboveIndex = repoIDs.firstIndex(of: above)
+    {
+      return (repoOffsets, aboveIndex + 1)
+    }
+    return nil
+  }
 
   static let empty = SidebarStructure(
     sections: [],
@@ -454,6 +529,7 @@ extension RepositoriesFeature.Action {
     case .sidebarGroupingTogglesChanged, .sidebarNestByBranchChanged,
       .sidebarSectionSortChanged,
       .repositoryExpansionChanged, .branchNestExpansionChanged,
+      .repositoryGroupExpansionChanged,
       .setAllSidebarGroupsExpanded,
       .setMoveNotifiedWorktreeToTop,
       .worktreeLineChangesLoaded,
@@ -570,6 +646,9 @@ extension RepositoriesFeature.Action {
     // Folder assignment regroups the bucket's rows.
     case .setWorktreesFolder:
       return .allSidebar
+    // Group assignment re-orders repository sections under group headers.
+    case .setRepositoriesGroup:
+      return .allSidebar
     case .worktreeCustomization:
       return []
 
@@ -631,7 +710,7 @@ extension RepositoriesFeature.Action {
       .toggleInspectorPane, .setInspectorPresented,
       .fileExplorer,
       .delayedPullRequestRefresh,
-      .openRepositorySettings, .requestCustomizeRepository,
+      .openRepositorySettings, .requestCustomizeRepository, .requestNewRepositoryGroup,
       .requestCustomizeWorktree, .requestCustomizeSelectedAppearance, .requestNewWorktreeFolder,
       .requestRenameBranch,
       .contextMenuOpenWorktree,
@@ -771,7 +850,8 @@ extension RepositoriesFeature.State {
       slotByID: hotkey.slotByID,
       repositoryHighlightByID: highlightProjections.tags,
       hoistSummaryByRepositoryID: highlightProjections.summaries,
-      reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs
+      reorderableRepositoryIDs: repoSections.reorderableRepositoryIDs,
+      repositoryGroupByID: repoSections.repositoryGroupByID
     )
   }
 
@@ -827,6 +907,7 @@ extension RepositoriesFeature.State {
   private struct RepositorySectionsBuild {
     var sections: [SidebarStructure.Section]
     var reorderableRepositoryIDs: [Repository.ID]
+    var repositoryGroupByID: [Repository.ID: String]
   }
 
   private func buildRepositorySections(
@@ -862,69 +943,143 @@ extension RepositoriesFeature.State {
       repositorySidebarSortName(for: id, localRootsByID: localRootsByID)
     }
     reorderableRepositoryIDs = persistedRepositoryIDs
+    var repositoryGroupByID: [Repository.ID: String] = [:]
     for repositoryID in displayRepositoryIDs {
-      let repository = repositories[id: repositoryID]
-      let isRemote = repository?.host != nil
-
-      // A disconnected remote keeps a placeholder repository (so it isn't
-      // pruned) plus a load failure; render it like a missing local folder.
-      if loadFailuresByID[repositoryID] != nil {
-        guard let rootURL = localRootsByID[repositoryID] ?? repository?.rootURL else { continue }
-        let sectionEntry = sidebar.sections[repositoryID]
-        // A folder's custom name / color live on its synthetic folder-worktree
-        // item (the row is a worktree row), not the section, so fall back to it.
-        let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
-        sections.append(
-          .failedRepository(
-            repositoryID: repositoryID,
-            rootURL: rootURL,
-            customTitle: sectionEntry?.title ?? folderItem?.title,
-            color: sectionEntry?.color ?? folderItem?.color,
-            isRemote: isRemote
-          )
+      if let group = sidebar.sections[repositoryID]?.group { repositoryGroupByID[repositoryID] = group }
+    }
+    // Group headers (A-Z) each followed by their members in display order,
+    // then ungrouped repos. A collapsed group skips its members' sections.
+    var ungroupedIDs: [Repository.ID] = []
+    var membersByGroup: [String: [Repository.ID]] = [:]
+    for repositoryID in displayRepositoryIDs {
+      if let group = repositoryGroupByID[repositoryID] {
+        membersByGroup[group, default: []].append(repositoryID)
+      } else {
+        ungroupedIDs.append(repositoryID)
+      }
+    }
+    let groupNames = membersByGroup.keys.sorted {
+      $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+    }
+    for name in groupNames {
+      let members = membersByGroup[name] ?? []
+      let isCollapsed = sidebar.collapsedGroups.contains(name)
+      sections.append(
+        .repositoryGroup(
+          name: name,
+          isCollapsed: isCollapsed,
+          memberCount: members.count,
+          leafIDs: isCollapsed ? groupLeafIDs(for: members) : []
         )
-        continue
-      }
-
-      // A git root we couldn't list because git itself is environment-blocked.
-      // Surface a warning row so the repo doesn't look removed. Folder roots keep
-      // a repository entry, so they never fall here.
-      if blockedRepositoryIDs.contains(repositoryID), let rootURL = localRootsByID[repositoryID] {
-        let sectionEntry = sidebar.sections[repositoryID]
-        let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
-        sections.append(
-          .environmentBlockedRepository(
-            repositoryID: repositoryID,
-            rootURL: rootURL,
-            customTitle: sectionEntry?.title ?? folderItem?.title,
-            color: sectionEntry?.color ?? folderItem?.color
-          )
-        )
-        continue
-      }
-
-      guard let repository else { continue }
-
-      if !repository.isGitRepository {
-        guard let folderRowID = repository.folderRowID, !hoisted.contains(folderRowID) else { continue }
-        sections.append(.folder(repositoryID: repositoryID, rowID: folderRowID))
-        continue
-      }
-
-      let groups = SidebarItemGroup.computeSlots(
-        in: self,
-        repositoryID: repositoryID,
-        pendingIDs: pendingIDsByRepo[repositoryID] ?? [],
-        hoistedRowIDs: hoisted,
-        nestWorktreesByBranch: sidebarNestWorktreesByBranch && repository.isGitRepository
       )
-      sections.append(.repository(repositoryID: repositoryID, groups: groups))
+      guard !isCollapsed else { continue }
+      for repositoryID in members {
+        if let section = repositorySection(
+          for: repositoryID,
+          hoisted: hoisted,
+          pendingIDsByRepo: pendingIDsByRepo,
+          localRootsByID: localRootsByID,
+          blockedRepositoryIDs: blockedRepositoryIDs
+        ) {
+          sections.append(section)
+        }
+      }
+    }
+    for repositoryID in ungroupedIDs {
+      if let section = repositorySection(
+        for: repositoryID,
+        hoisted: hoisted,
+        pendingIDsByRepo: pendingIDsByRepo,
+        localRootsByID: localRootsByID,
+        blockedRepositoryIDs: blockedRepositoryIDs
+      ) {
+        sections.append(section)
+      }
     }
 
     return RepositorySectionsBuild(
       sections: sections,
-      reorderableRepositoryIDs: reorderableRepositoryIDs
+      reorderableRepositoryIDs: reorderableRepositoryIDs,
+      repositoryGroupByID: repositoryGroupByID
     )
+  }
+
+  /// Live, non-archived row IDs of `repositoryIDs`, feeding a collapsed group
+  /// header's aggregated indicators.
+  private func groupLeafIDs(for repositoryIDs: [Repository.ID]) -> [Worktree.ID] {
+    var ids: [Worktree.ID] = []
+    for repositoryID in repositoryIDs {
+      guard let repository = repositories[id: repositoryID] else { continue }
+      if !repository.isGitRepository {
+        if let folderRowID = repository.folderRowID { ids.append(folderRowID) }
+        continue
+      }
+      if let buckets = sidebarGrouping.bucketsByRepository[repositoryID] {
+        ids.append(contentsOf: buckets[.pinned])
+        ids.append(contentsOf: buckets[.unpinned])
+      }
+    }
+    return ids
+  }
+
+  /// The section one repository renders as, or `nil` when it renders nothing
+  /// (still loading, or a folder row hoisted into a highlight section).
+  private func repositorySection(
+    for repositoryID: Repository.ID,
+    hoisted: Set<Worktree.ID>,
+    pendingIDsByRepo: [Repository.ID: Set<Worktree.ID>],
+    localRootsByID: [Repository.ID: URL],
+    blockedRepositoryIDs: Set<Repository.ID>
+  ) -> SidebarStructure.Section? {
+    let repository = repositories[id: repositoryID]
+    let isRemote = repository?.host != nil
+
+    // A disconnected remote keeps a placeholder repository (so it isn't
+    // pruned) plus a load failure; render it like a missing local folder.
+    if loadFailuresByID[repositoryID] != nil {
+      guard let rootURL = localRootsByID[repositoryID] ?? repository?.rootURL else { return nil }
+      let sectionEntry = sidebar.sections[repositoryID]
+      // A folder's custom name / color live on its synthetic folder-worktree
+      // item (the row is a worktree row), not the section, so fall back to it.
+      let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
+      return .failedRepository(
+        repositoryID: repositoryID,
+        rootURL: rootURL,
+        customTitle: sectionEntry?.title ?? folderItem?.title,
+        color: sectionEntry?.color ?? folderItem?.color,
+        isRemote: isRemote
+      )
+    }
+
+    // A git root we couldn't list because git itself is environment-blocked.
+    // Surface a warning row so the repo doesn't look removed. Folder roots keep
+    // a repository entry, so they never fall here.
+    if blockedRepositoryIDs.contains(repositoryID), let rootURL = localRootsByID[repositoryID] {
+      let sectionEntry = sidebar.sections[repositoryID]
+      let folderItem = sectionEntry?.folderWorktreeItem(for: repositoryID)
+      return .environmentBlockedRepository(
+        repositoryID: repositoryID,
+        rootURL: rootURL,
+        customTitle: sectionEntry?.title ?? folderItem?.title,
+        color: sectionEntry?.color ?? folderItem?.color
+      )
+    }
+
+    guard let repository else { return nil }
+
+    if !repository.isGitRepository {
+      guard let folderRowID = repository.folderRowID, !hoisted.contains(folderRowID) else { return nil }
+      return .folder(repositoryID: repositoryID, rowID: folderRowID)
+    }
+
+    let groups = SidebarItemGroup.computeSlots(
+      in: self,
+      repositoryID: repositoryID,
+      pendingIDs: pendingIDsByRepo[repositoryID] ?? [],
+      hoistedRowIDs: hoisted,
+      nestWorktreesByBranch: sidebarNestWorktreesByBranch && repository.isGitRepository
+    )
+    return .repository(repositoryID: repositoryID, groups: groups)
   }
 
   /// Sidebar title used when section sort is `.alphabetical`, matching each
@@ -1057,7 +1212,7 @@ extension RepositoriesFeature.State {
     var ids: [Worktree.ID] = []
     for section in sections {
       switch section {
-      case .highlight, .placeholder, .failedRepository, .environmentBlockedRepository:
+      case .highlight, .repositoryGroup, .placeholder, .failedRepository, .environmentBlockedRepository:
         continue
       case .folder(_, let rowID):
         ids.append(rowID)

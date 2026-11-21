@@ -6,6 +6,7 @@ struct FailedRepositoryRow: View {
   let name: String
   let path: String
   let removeRepository: () -> Void
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   var body: some View {
     Label {
@@ -20,6 +21,7 @@ struct FailedRepositoryRow: View {
         .accessibilityLabel("Repository unavailable")
     }
     .labelStyle(.verticallyCentered)
+    .listRowInsets(.leading, groupIndent)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 6)
     .contextMenu {
@@ -46,6 +48,7 @@ struct EnvironmentBlockedRepositoryRow: View {
   let name: String
   let path: String
   let removeRepository: () -> Void
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   var body: some View {
     Label {
@@ -60,6 +63,7 @@ struct EnvironmentBlockedRepositoryRow: View {
         .accessibilityLabel("Git unavailable")
     }
     .labelStyle(.verticallyCentered)
+    .listRowInsets(.leading, groupIndent)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 6)
     .help(

@@ -25,6 +25,9 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   var schemaVersion: Int
   var sections: OrderedDictionary<Repository.ID, Section>
   var focusedWorktreeID: Worktree.ID?
+  /// Names of user-defined repository groups whose member sections are
+  /// currently collapsed in the sidebar. Pruned when no section uses the name.
+  var collapsedGroups: Set<String>
 
   /// Memberwise initializer. `schemaVersion` defaults to `0`, meaning
   /// "not migrated yet, or migrator failed". The boot-time migrator
@@ -34,17 +37,20 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
   init(
     schemaVersion: Int = 0,
     sections: OrderedDictionary<Repository.ID, Section> = [:],
-    focusedWorktreeID: Worktree.ID? = nil
+    focusedWorktreeID: Worktree.ID? = nil,
+    collapsedGroups: Set<String> = []
   ) {
     self.schemaVersion = schemaVersion
     self.sections = sections
     self.focusedWorktreeID = focusedWorktreeID
+    self.collapsedGroups = collapsedGroups
   }
 
   private enum CodingKeys: String, CodingKey {
     case schemaVersion
     case sections
     case focusedWorktreeID
+    case collapsedGroups
   }
 
   init(from decoder: any Decoder) throws {
@@ -59,6 +65,9 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
         forKey: .sections
       ) ?? [:]
     self.focusedWorktreeID = try container.decodeIfPresent(Worktree.ID.self, forKey: .focusedWorktreeID)
+    // `try?` so a malformed value drops just this field, not the whole layout.
+    self.collapsedGroups =
+      (try? container.decodeIfPresent(Set<String>.self, forKey: .collapsedGroups)) ?? []
   }
 
   func encode(to encoder: any Encoder) throws {
@@ -69,6 +78,10 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     try container.encode(schemaVersion, forKey: .schemaVersion)
     try container.encode(sections, forKey: .sections)
     try container.encodeIfPresent(focusedWorktreeID, forKey: .focusedWorktreeID)
+    // Omit when empty so `sidebar.json` stays clean for users without groups.
+    if !collapsedGroups.isEmpty {
+      try container.encode(collapsedGroups, forKey: .collapsedGroups)
+    }
   }
 
   nonisolated enum BucketID: String, Codable, Hashable, Sendable {
@@ -98,17 +111,23 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
     /// Optional user-supplied tint applied to the sidebar header.
     /// `nil` means "default / no tint".
     var color: RepositoryColor?
+    /// Optional user-defined group the repository renders under in the
+    /// sidebar (e.g. "Work", "Music"). `nil` means ungrouped. Always stored
+    /// normalized (see `SidebarFolderName.normalized`).
+    var group: String?
 
     init(
       collapsed: Bool = false,
       buckets: OrderedDictionary<BucketID, Bucket> = [:],
       title: String? = nil,
-      color: RepositoryColor? = nil
+      color: RepositoryColor? = nil,
+      group: String? = nil
     ) {
       self.collapsed = collapsed
       self.buckets = buckets
       self.title = title
       self.color = color
+      self.group = SidebarFolderName.normalized(group)
     }
 
     private enum SectionCodingKeys: String, CodingKey {
@@ -116,6 +135,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       case buckets
       case title
       case color
+      case group
     }
 
     init(from decoder: any Decoder) throws {
@@ -131,6 +151,10 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
         ) ?? [:]
       self.title = try container.decodeIfPresent(String.self, forKey: .title)
       self.color = try container.decodeIfPresent(RepositoryColor.self, forKey: .color)
+      // Re-normalize so a hand-edited value can't produce an invalid header.
+      self.group = SidebarFolderName.normalized(
+        (try? container.decodeIfPresent(String.self, forKey: .group)) ?? nil
+      )
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -143,6 +167,7 @@ nonisolated struct SidebarState: Equatable, Sendable, Codable {
       // stays clean for repos the user never touched.
       try container.encodeIfPresent(title, forKey: .title)
       try container.encodeIfPresent(color, forKey: .color)
+      try container.encodeIfPresent(group, forKey: .group)
     }
   }
 
@@ -312,9 +337,6 @@ nonisolated extension SidebarState {
     return nil
   }
 
-  /// Whether `worktreeID` sits in the archived bucket. Not a proxy for "on
-  /// screen": collapsed or failed repositories render no rows, and an archived
-  /// worktree re-enters the sidebar while its delete script runs.
   /// Distinct folder names used by any row (archived included) in
   /// `repositoryID`, sorted case-insensitively. Backs the folder pickers.
   func folderNames(in repositoryID: Repository.ID) -> [String] {
@@ -328,12 +350,41 @@ nonisolated extension SidebarState {
     return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
   }
 
+  /// Distinct repository group names in use across all sections, sorted
+  /// case-insensitively. Backs the group pickers and the header order.
+  var groupNames: [String] {
+    Set(sections.values.compactMap(\.group))
+      .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+  }
+
+  /// Assigns (or, with `nil` / blank, clears) the group of each repository,
+  /// materializing missing sections. Drops collapse state for names no
+  /// section uses any more.
+  mutating func setGroup(_ group: String?, for repositoryIDs: [Repository.ID]) {
+    let normalized = SidebarFolderName.normalized(group)
+    for repositoryID in repositoryIDs {
+      sections[repositoryID, default: .init()].group = normalized
+    }
+    pruneCollapsedGroups()
+  }
+
+  /// Intersects `collapsedGroups` with the names still in use.
+  mutating func pruneCollapsedGroups() {
+    guard !collapsedGroups.isEmpty else { return }
+    let inUse = Set(sections.values.compactMap(\.group))
+    let next = collapsedGroups.intersection(inUse)
+    if next != collapsedGroups { collapsedGroups = next }
+  }
+
   /// The sidebar folder `worktreeID` is assigned to, wherever it is bucketed.
   func folder(of worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> String? {
     guard let bucket = currentBucket(of: worktreeID, in: repositoryID) else { return nil }
     return sections[repositoryID]?.buckets[bucket]?.items[worktreeID]?.folder
   }
 
+  /// Whether `worktreeID` sits in the archived bucket. Not a proxy for "on
+  /// screen": collapsed or failed repositories render no rows, and an archived
+  /// worktree re-enters the sidebar while its delete script runs.
   func isArchived(_ worktreeID: Worktree.ID, in repositoryID: Repository.ID) -> Bool {
     sections[repositoryID]?.buckets[.archived]?.items[worktreeID] != nil
   }
