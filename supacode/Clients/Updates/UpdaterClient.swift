@@ -25,6 +25,15 @@ class SparkleUpdateDelegate: NSObject, SPUUpdaterDelegate {
     }
   }
 
+  /// Personal fork: refuse every update check, including ones Sparkle schedules on its
+  /// own before `configure` runs, so an upstream release can never replace this build.
+  nonisolated func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
+    throw NSError(
+      domain: "app.supabit.supacode.fork", code: 1,
+      userInfo: [NSLocalizedDescriptionKey: "Updates are disabled in this personal build."]
+    )
+  }
+
   nonisolated func updater(
     _ updater: SPUUpdater,
     shouldProceedWithUpdate item: SUAppcastItem,
