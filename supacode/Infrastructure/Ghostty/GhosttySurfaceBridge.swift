@@ -52,6 +52,8 @@ final class GhosttySurfaceBridge {
   var onTitleChange: ((String) -> Void)?
   var onPromptTitle: (() -> Void)?
   var onSplitAction: ((GhosttySplitAction) -> Bool)?
+  /// Claims a cmd-clicked link before the system opens it; return true when handled.
+  var onOpenURL: ((GhosttyOpenURLRequest) -> Bool)?
   var onCloseRequest: ((Bool) -> Void)?
   var onNewTab: (() -> Bool)?
   var onCloseTab: ((ghostty_action_close_tab_mode_e) -> Bool)?
@@ -468,7 +470,9 @@ final class GhosttySurfaceBridge {
       state.openUrl = rawUrl
       if let request = ghosttyOpenURLRequest(urlString: rawUrl, kind: openUrl.kind) {
         SupaLogger("GhosttySurfaceBridge").debug("OPEN_URL raw=\(rawUrl ?? "nil") resolved=\(request.url)")
-        NSWorkspace.shared.open(request.url)
+        if onOpenURL?(request) != true {
+          NSWorkspace.shared.open(request.url)
+        }
       }
       return true
 

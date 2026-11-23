@@ -109,6 +109,28 @@ public nonisolated enum HoverFocusMode: String, Codable, CaseIterable, Sendable 
   }
 }
 
+/// Where a cmd-clicked terminal link opens. Only http(s) links honor the
+/// browser pane; file paths and other schemes always go to the system.
+public nonisolated enum TerminalLinkTarget: String, Codable, CaseIterable, Sendable {
+  /// The system default browser. The default.
+  case systemBrowser
+  /// A Supacode browser split beside the pane that was clicked.
+  case browserPane
+
+  public var label: String {
+    switch self {
+    case .systemBrowser: "Default browser"
+    case .browserPane: "Browser split"
+    }
+  }
+
+  /// Whether `url` should open in a Supacode browser split under this target.
+  public func opensInBrowserPane(_ url: URL) -> Bool {
+    guard self == .browserPane, let scheme = url.scheme?.lowercased() else { return false }
+    return scheme == "http" || scheme == "https"
+  }
+}
+
 public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var appearanceMode: AppearanceMode
   public var defaultEditorID: String
@@ -184,6 +206,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   public var automaticRepositoryRefreshEnabled: Bool
   /// Whether hovering a split pane focuses it (focus follows mouse). Off by default.
   public var hoverFocusMode: HoverFocusMode
+  /// Where cmd-clicked terminal links open. Defaults to the system browser.
+  public var terminalLinkTarget: TerminalLinkTarget
   /// System-wide chord that toggles the app; nil (the default) leaves it unbound.
   public var globalToggleVisibilityHotkey: AppShortcutOverride?
 
@@ -279,6 +303,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     chromeTextSize: ChromeTextSize = .default,
     automaticRepositoryRefreshEnabled: Bool = true,
     hoverFocusMode: HoverFocusMode = .never,
+    terminalLinkTarget: TerminalLinkTarget = .systemBrowser,
     globalToggleVisibilityHotkey: AppShortcutOverride? = nil
   ) {
     self.appearanceMode = appearanceMode
@@ -327,6 +352,7 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
     self.chromeTextSize = chromeTextSize
     self.automaticRepositoryRefreshEnabled = automaticRepositoryRefreshEnabled
     self.hoverFocusMode = hoverFocusMode
+    self.terminalLinkTarget = terminalLinkTarget
     self.globalToggleVisibilityHotkey = globalToggleVisibilityHotkey
   }
 
@@ -557,6 +583,11 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
       ((try? container.decodeIfPresent(String.self, forKey: .hoverFocusMode)) ?? nil)
       .flatMap(HoverFocusMode.init(rawValue:))
       ?? Self.default.hoverFocusMode
+    // Same lossy decode: an unknown or mistyped value falls back to the default.
+    terminalLinkTarget =
+      ((try? container.decodeIfPresent(String.self, forKey: .terminalLinkTarget)) ?? nil)
+      .flatMap(TerminalLinkTarget.init(rawValue:))
+      ?? Self.default.terminalLinkTarget
     // A malformed value falls back to unbound instead of throwing, which would
     // reset the whole file to defaults.
     globalToggleVisibilityHotkey =

@@ -388,6 +388,13 @@ struct SupacodeApp: App {
           runtime: ContentRuntime.liveValue,
           handleUnexpectedZmxClose: { [weak terminalManager] view in
             terminalManager?.handleUnexpectedZmxClose(view, worktreeID: worktree.id)
+          },
+          openInBrowserPane: { [weak terminalManager] url, contentID in
+            guard let terminalManager else { return false }
+            // A content id is a valid pane token: the split lands beside the clicked pane.
+            terminalManager.handleCommand(
+              .splitPaneWithBrowser(worktree, paneToken: contentID.rawValue, direction: .horizontal, url: url))
+            return true
           }
         ).wire(view, contentID: request.contentID)
       },

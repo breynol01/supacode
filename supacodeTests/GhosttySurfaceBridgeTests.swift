@@ -108,6 +108,36 @@ struct GhosttySurfaceBridgeTests {
     }
   }
 
+  @Test
+  func openUrlCallbackReceivesTheRequest() {
+    let bridge = GhosttySurfaceBridge()
+    let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())
+    var received: URL?
+    // Claiming the link keeps the system browser out of the test.
+    bridge.onOpenURL = { request in
+      received = request.url
+      return true
+    }
+
+    withOpenURLAction(url: "https://supacode.dev/changelog") { action in
+      #expect(bridge.handleAction(target: target, action: action))
+    }
+    #expect(received?.absoluteString == "https://supacode.dev/changelog")
+  }
+
+  @Test
+  func terminalLinkTargetRoutesOnlyWebLinksToTheBrowserPane() throws {
+    let web = try #require(URL(string: "https://example.com/a"))
+    let plain = try #require(URL(string: "HTTP://example.com"))
+    let file = URL(fileURLWithPath: "/tmp/test")
+    let mail = try #require(URL(string: "mailto:someone@example.com"))
+    #expect(TerminalLinkTarget.browserPane.opensInBrowserPane(web))
+    #expect(TerminalLinkTarget.browserPane.opensInBrowserPane(plain))
+    #expect(!TerminalLinkTarget.browserPane.opensInBrowserPane(file))
+    #expect(!TerminalLinkTarget.browserPane.opensInBrowserPane(mail))
+    #expect(!TerminalLinkTarget.systemBrowser.opensInBrowserPane(web))
+  }
+
   @Test func desktopNotificationEmitsCallback() {
     let bridge = GhosttySurfaceBridge()
     var received: (title: String, body: String)?
