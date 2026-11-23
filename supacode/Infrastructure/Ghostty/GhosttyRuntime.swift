@@ -735,6 +735,9 @@ final class GhosttyRuntime {
   /// terminal (issue #440); loaded after the user config so it wins. The version
   /// is always emitted because Ghostty's `env` map can override a key but not
   /// clear its seeded version, so a blank value falls back to a placeholder.
+  /// `FORCE_HYPERLINK=1` restores OSC 8 links: `supports-hyperlinks` and the
+  /// CLIs built on it (Claude Code included) allowlist known `TERM_PROGRAM`
+  /// values such as `ghostty`, so an unknown `supacode` would print plain URLs.
   internal static func terminalProgramOverrides(version: String?) -> String {
     // Trim like Ghostty's `env` parser, which strips whitespace then drops a
     // now-empty value, leaving its seeded version.
@@ -743,6 +746,7 @@ final class GhosttyRuntime {
     return """
       env = TERM_PROGRAM=supacode
       env = TERM_PROGRAM_VERSION=\(resolved)
+      env = FORCE_HYPERLINK=1
       """
   }
 
