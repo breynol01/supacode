@@ -51,7 +51,8 @@ extension RepositoriesFeature {
         }
         return .send(request)
 
-      case .requestCustomizeWorktree(let worktreeID, let repositoryID):
+      case .requestCustomizeWorktree(let worktreeID, let repositoryID),
+        .requestNewWorktreeFolder(let worktreeID, let repositoryID):
         guard let repository = state.repositories[id: repositoryID],
           let worktree = repository.worktrees.first(where: { $0.id == worktreeID })
         else {
@@ -80,7 +81,11 @@ extension RepositoriesFeature {
           repositoryID: repositoryID,
           defaultName: defaultName,
           title: storedItem?.title ?? "",
-          color: storedItem?.color
+          color: storedItem?.color,
+          supportsFolder: repository.isGitRepository,
+          folder: storedItem?.folder ?? "",
+          existingFolders: repository.isGitRepository ? state.sidebar.folderNames(in: repositoryID) : [],
+          focusesFolderOnAppear: repository.isGitRepository && action.is(\.requestNewWorktreeFolder)
         )
         return .none
 
@@ -89,12 +94,14 @@ extension RepositoriesFeature {
         return .none
 
       case .worktreeCustomization(
-        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let color)))
+        .presented(.delegate(.save(let worktreeID, let repositoryID, let title, let color, let folder)))
       ):
         // Always overwrite (user save intent); falls back to `.unpinned` when the row hasn't been
         // seeded into a bucket yet (folder synthetic before first reconcile, deeplink/palette).
+        let isGit = state.repositories[id: repositoryID]?.isGitRepository == true
         state.$sidebar.withLock { sidebar in
           sidebar.setCustomization(title: title, color: color, worktree: worktreeID, in: repositoryID)
+          if isGit { sidebar.setFolder(folder, worktree: worktreeID, in: repositoryID) }
         }
         syncSidebar(&state)
         state.worktreeCustomization = nil
@@ -107,6 +114,16 @@ extension RepositoriesFeature {
       case .setWorktreeAppearance(let worktreeID, let repositoryID, let title, let color):
         state.$sidebar.withLock { sidebar in
           sidebar.setCustomization(title: title, color: color, worktree: worktreeID, in: repositoryID)
+        }
+        syncSidebar(&state)
+        return .none
+
+      case .setWorktreesFolder(let worktreeIDs, let repositoryID, let folder):
+        guard state.repositories[id: repositoryID]?.isGitRepository == true else { return .none }
+        state.$sidebar.withLock { sidebar in
+          for worktreeID in worktreeIDs {
+            sidebar.setFolder(folder, worktree: worktreeID, in: repositoryID)
+          }
         }
         syncSidebar(&state)
         return .none
