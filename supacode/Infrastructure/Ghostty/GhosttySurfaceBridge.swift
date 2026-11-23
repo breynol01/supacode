@@ -25,23 +25,47 @@ enum GhosttyOpenURLKind: Equatable {
 struct GhosttyOpenURLRequest: Equatable {
   let kind: GhosttyOpenURLKind
   let url: URL
+  /// The line from a `path:line[:column]` reference; nil for URLs and bare paths.
+  var line: Int?
 }
 
+/// Builds the request for a cmd-clicked link. A path is resolved against
+/// `workingDirectory` (the shell's OSC 7 directory) when relative, and a
+/// trailing `:line[:column]` is split off so the file itself resolves.
 func ghosttyOpenURLRequest(
   urlString: String?,
-  kind: ghostty_action_open_url_kind_e
+  kind: ghostty_action_open_url_kind_e,
+  workingDirectory: String? = nil
 ) -> GhosttyOpenURLRequest? {
   guard let urlString = urlString?.trimmingCharacters(in: .whitespacesAndNewlines),
     !urlString.isEmpty
   else { return nil }
-  let url: URL
   if let candidate = URL(string: urlString), candidate.scheme != nil {
-    url = candidate
-  } else {
-    let expanded = NSString(string: urlString).expandingTildeInPath
-    url = URL(filePath: expanded).standardizedFileURL
+    return GhosttyOpenURLRequest(kind: GhosttyOpenURLKind(kind), url: candidate)
   }
-  return GhosttyOpenURLRequest(kind: GhosttyOpenURLKind(kind), url: url)
+  let (path, line) = splitLineSuffix(urlString)
+  var expanded = NSString(string: path).expandingTildeInPath
+  if !expanded.hasPrefix("/"),
+    let workingDirectory = workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+    workingDirectory.hasPrefix("/")
+  {
+    expanded = NSString(string: workingDirectory).appendingPathComponent(expanded)
+  }
+  let url = URL(filePath: expanded).standardizedFileURL
+  return GhosttyOpenURLRequest(kind: GhosttyOpenURLKind(kind), url: url, line: line)
+}
+
+/// Splits `file.swift:42` or `file.swift:42:7` into the path and its line.
+/// Anything else, including a path with a non-numeric colon part, is left whole.
+private func splitLineSuffix(_ raw: String) -> (path: String, line: Int?) {
+  var parts = raw.split(separator: ":", omittingEmptySubsequences: false)
+  var numbers: [Int] = []
+  while parts.count > 1, numbers.count < 2, let last = parts.last, let value = Int(last), value > 0 {
+    numbers.insert(value, at: 0)
+    parts.removeLast()
+  }
+  guard let line = numbers.first else { return (raw, nil) }
+  return (parts.joined(separator: ":"), line)
 }
 
 @MainActor
@@ -468,7 +492,7 @@ final class GhosttySurfaceBridge {
       state.openUrlKind = openUrl.kind
       let rawUrl = string(from: openUrl.url, length: openUrl.len)
       state.openUrl = rawUrl
-      if let request = ghosttyOpenURLRequest(urlString: rawUrl, kind: openUrl.kind) {
+      if let request = ghosttyOpenURLRequest(urlString: rawUrl, kind: openUrl.kind, workingDirectory: state.pwd) {
         SupaLogger("GhosttySurfaceBridge").debug("OPEN_URL raw=\(rawUrl ?? "nil") resolved=\(request.url)")
         if onOpenURL?(request) != true {
           NSWorkspace.shared.open(request.url)

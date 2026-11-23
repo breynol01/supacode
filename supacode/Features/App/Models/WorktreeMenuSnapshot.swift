@@ -135,7 +135,7 @@ extension AppFeature.Action {
       .refreshInstalledOpenActions, .installedOpenActionsResolved,
       .refreshWorktreesRequested,
       .worktreeSettingsLoaded, .openSelectedWorktree, .revealInFinder,
-      .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .requestQuit,
+      .openWorktree, .openWorktreeFailed, .openFile, .openFileFromExplorer, .openFileFromTerminal, .requestQuit,
       .requestTerminateAllTerminalSessions, .newTerminal, .newTerminalInWorktree, .renameSelectedTerminalTab,
       .selectTerminalTabAtIndex, .selectNextTerminalTab, .selectPreviousTerminalTab,
       .splitTerminal, .openBrowserSplit, .toggleWindowModeForFocusedPane, .toggleSplitZoom,

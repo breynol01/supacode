@@ -49,10 +49,11 @@ public struct RepositoryScriptsSettingsView: View {
         LifecycleScriptSection(
           text: $store.settings.openFileScript,
           title: "Open File Script",
-          subtitle: "Opens a double-clicked file. Empty inherits the global script, then the system app.",
+          subtitle:
+            "Opens a double-clicked or \u{2318}-clicked file. Empty inherits the global script, then the system app.",
           icon: "arrow.up.forward.app",
           iconColor: .teal,
-          footerExample: "nvim \"$SUPACODE_FILE_PATH\""
+          footerExample: "nvim +\"${SUPACODE_FILE_LINE:-1}\" \"$SUPACODE_FILE_PATH\""
         )
 
         // User-defined scripts, each in its own section.

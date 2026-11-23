@@ -395,6 +395,11 @@ struct SupacodeApp: App {
             terminalManager.handleCommand(
               .splitPaneWithBrowser(worktree, paneToken: contentID.rawValue, direction: .horizontal, url: url))
             return true
+          },
+          openFile: { [weak terminalManager] url, line in
+            guard let appStore = terminalManager?.appStore else { return false }
+            appStore.send(.openFileFromTerminal(url, line: line, worktreeID: worktree.id))
+            return true
           }
         ).wire(view, contentID: request.contentID)
       },

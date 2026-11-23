@@ -97,6 +97,54 @@ struct GhosttySurfaceBridgeTests {
   }
 
   @Test
+  func openUrlRequestResolvesRelativePathAgainstWorkingDirectoryAndSplitsLine() {
+    let request = ghosttyOpenURLRequest(
+      urlString: "supacode/App/main.swift:734:10",
+      kind: GHOSTTY_ACTION_OPEN_URL_KIND_UNKNOWN,
+      workingDirectory: "/tmp/repo"
+    )
+
+    #expect(request?.url.isFileURL == true)
+    #expect(request?.url.path == "/tmp/repo/supacode/App/main.swift")
+    #expect(request?.line == 734)
+  }
+
+  @Test
+  func openUrlRequestSplitsLineFromAbsolutePath() {
+    let request = ghosttyOpenURLRequest(
+      urlString: "/tmp/repo/README.md:12",
+      kind: GHOSTTY_ACTION_OPEN_URL_KIND_UNKNOWN,
+      workingDirectory: "/elsewhere"
+    )
+
+    #expect(request?.url.path == "/tmp/repo/README.md")
+    #expect(request?.line == 12)
+  }
+
+  @Test
+  func openUrlRequestKeepsNonNumericColonInPath() {
+    let request = ghosttyOpenURLRequest(
+      urlString: "/tmp/a:b/file.txt",
+      kind: GHOSTTY_ACTION_OPEN_URL_KIND_UNKNOWN
+    )
+
+    #expect(request?.url.path == "/tmp/a:b/file.txt")
+    #expect(request?.line == nil)
+  }
+
+  @Test
+  func openUrlRequestLeavesWebURLLineless() {
+    let request = ghosttyOpenURLRequest(
+      urlString: "https://example.com:8080/a",
+      kind: GHOSTTY_ACTION_OPEN_URL_KIND_UNKNOWN,
+      workingDirectory: "/tmp/repo"
+    )
+
+    #expect(request?.url.absoluteString == "https://example.com:8080/a")
+    #expect(request?.line == nil)
+  }
+
+  @Test
   func openUrlReturnsHandledResult() {
     let bridge = GhosttySurfaceBridge()
     let target = ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: .init())

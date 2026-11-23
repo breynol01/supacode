@@ -174,7 +174,8 @@ public nonisolated struct GlobalSettings: Codable, Equatable, Sendable {
   /// Scripts shared across every repository. Always `.custom` kind.
   public var globalScripts: [ScriptDefinition]
   /// Global fallback for opening a File Explorer file when the repo sets none, with its path in
-  /// `SUPACODE_FILE_PATH`. Empty uses the system default app. A hook, never in the script menu.
+  /// `SUPACODE_FILE_PATH`; a terminal `path:line` click adds `SUPACODE_FILE_LINE`. Empty uses the
+  /// system default app. A hook, never in the script menu.
   public var openFileScript: String
   public var richAgentNotificationsEnabled: Bool
   public var agentPresenceBadgesEnabled: Bool
