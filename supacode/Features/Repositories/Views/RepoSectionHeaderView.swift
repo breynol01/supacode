@@ -11,6 +11,7 @@ struct RepoSectionHeaderView: View {
   var hostInfo: String?
   /// Remote repository whose SSH listing is still resolving; shows a spinner.
   var isResolving: Bool = false
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   private var displayName: String {
     Repository.sidebarDisplayName(custom: customTitle, fallback: name)
@@ -42,5 +43,6 @@ struct RepoSectionHeaderView: View {
           .accessibilityLabel("Connecting to remote")
       }
     }
+    .padding(.leading, groupIndent)
   }
 }

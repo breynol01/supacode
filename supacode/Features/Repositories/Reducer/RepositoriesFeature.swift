@@ -403,6 +403,8 @@ struct RepositoriesFeature {
     case gitEnvironmentChanged(GitEnvironmentError?)
     case selectionChanged(Set<SidebarSelection>, focusTerminal: Bool = false)
     case repositoryExpansionChanged(Repository.ID, isExpanded: Bool)
+    /// Expands / collapses a user-defined repository group header.
+    case repositoryGroupExpansionChanged(name: String, isExpanded: Bool)
     case branchNestExpansionChanged(
       repositoryID: Repository.ID,
       bucketID: SidebarBucket,
@@ -608,6 +610,10 @@ struct RepositoriesFeature {
     case delayedPullRequestRefresh(Worktree.ID)
     case openRepositorySettings(Repository.ID)
     case requestCustomizeRepository(Repository.ID)
+    /// Opens the repository customization sheet with the Group field focused.
+    case requestNewRepositoryGroup(Repository.ID)
+    /// Assigns (or, with `nil` / blank, clears) the sidebar group of repositories.
+    case setRepositoriesGroup([Repository.ID], group: String?)
     case requestCustomizeWorktree(Worktree.ID, Repository.ID)
     case requestCustomizeSelectedAppearance
     /// Opens the worktree customization sheet with the Folder field focused.
@@ -4079,6 +4085,26 @@ struct RepositoriesFeature {
         }
         return .none
 
+      case .repositoryGroupExpansionChanged(let name, let isExpanded):
+        // Refuse to record collapse state for a name no section uses (stale UI).
+        guard isExpanded || state.sidebar.groupNames.contains(name) else { return .none }
+        state.$sidebar.withLock { sidebar in
+          if isExpanded {
+            sidebar.collapsedGroups.remove(name)
+          } else {
+            sidebar.collapsedGroups.insert(name)
+          }
+        }
+        return .none
+
+      case .setRepositoriesGroup(let repositoryIDs, let group):
+        let knownIDs = repositoryIDs.filter { state.repositories[id: $0] != nil }
+        guard !knownIDs.isEmpty else { return .none }
+        state.$sidebar.withLock { sidebar in
+          sidebar.setGroup(group, for: knownIDs)
+        }
+        return .none
+
       case .branchNestExpansionChanged(let repositoryID, let bucketID, let prefix, let isExpanded):
         // Only `.pinned` / `.unpinned` render nested rows; `.archived` has no
         // chevron and would just bloat `sidebar.json` with dead entries. Also
@@ -4113,6 +4139,7 @@ struct RepositoriesFeature {
               sidebar.sections[repositoryID, default: .init()].collapsed = true
               continue
             }
+            sidebar.collapsedGroups.removeAll()
             // A repo with no entry is already fully open, so nothing to undo.
             guard var section = sidebar.sections[repositoryID] else { continue }
             section.collapsed = false
@@ -4192,6 +4219,10 @@ struct RepositoriesFeature {
         }
         state.$sidebar.withLock { sidebar in
           sidebar.sections[repositoryID, default: .init()].collapsed = false
+          // A row inside a collapsed repository group is hidden too.
+          if let group = sidebar.sections[repositoryID]?.group {
+            sidebar.collapsedGroups.remove(group)
+          }
           // Uncollapse any ancestor branch prefix so a reveal / deeplink to
           // `feature/tools/api` doesn't leave the row hidden inside a
           // collapsed `feature/tools` group header.
@@ -4787,16 +4818,19 @@ struct RepositoriesFeature {
       case .openRepositorySettings(let repositoryID):
         return .send(.delegate(.openRepositorySettings(repositoryID)))
 
-      case .requestCustomizeRepository(let repositoryID):
+      case .requestCustomizeRepository(let repositoryID),
+        .requestNewRepositoryGroup(let repositoryID):
         guard let repository = state.repositories[id: repositoryID] else {
           return .none
         }
+        let isNewGroup = action.is(\.requestNewRepositoryGroup)
         // Folder-kind repositories render through `SidebarFolderRow`,
         // which has no section header to tint and no ellipsis menu
         // to expose. Guard the action so a future deeplink or
         // command-palette hookup can't write customization that the
-        // sidebar would never display.
-        guard repository.isGitRepository else {
+        // sidebar would never display. "New Group…" still opens a
+        // group-only sheet for them.
+        guard repository.isGitRepository || isNewGroup else {
           return .none
         }
         // The sidebar disables customize while the repo is being removed; the
@@ -4811,7 +4845,11 @@ struct RepositoriesFeature {
           repositoryID: repositoryID,
           defaultName: repository.name,
           title: storedTitle,
-          color: storedColor
+          color: storedColor,
+          supportsAppearance: repository.isGitRepository,
+          group: section?.group ?? "",
+          existingGroups: state.sidebar.groupNames,
+          focusesGroupOnAppear: isNewGroup
         )
         return .none
 
@@ -4819,10 +4857,16 @@ struct RepositoriesFeature {
         state.repositoryCustomization = nil
         return .none
 
-      case .repositoryCustomization(.presented(.delegate(.save(let repositoryID, let title, let color)))):
+      case .repositoryCustomization(
+        .presented(.delegate(.save(let repositoryID, let title, let color, let group)))
+      ):
+        let supportsAppearance = state.repositoryCustomization?.supportsAppearance ?? true
         state.$sidebar.withLock { sidebar in
-          sidebar.sections[repositoryID, default: .init()].title = title
-          sidebar.sections[repositoryID, default: .init()].color = color
+          if supportsAppearance {
+            sidebar.sections[repositoryID, default: .init()].title = title
+            sidebar.sections[repositoryID, default: .init()].color = color
+          }
+          sidebar.setGroup(group, for: [repositoryID])
         }
         state.repositoryCustomization = nil
         return .none
@@ -5999,7 +6043,14 @@ extension RepositoriesFeature.State {
       sidebar.sections.compactMap { $0.value.collapsed ? $0.key : nil }
     ).intersection(repositoryIDs)
     let pendingRepositoryIDs = Set(pendingWorktrees.map(\.repositoryID))
-    return repositoryIDs.subtracting(collapsedSet).union(pendingRepositoryIDs)
+    let expanded = repositoryIDs.subtracting(collapsedSet).union(pendingRepositoryIDs)
+    // Members of a collapsed repository group render no section at all, so
+    // keyboard navigation and hotkeys must skip them too.
+    guard !sidebar.collapsedGroups.isEmpty else { return expanded }
+    return expanded.filter { id in
+      guard let group = sidebar.sections[id]?.group else { return true }
+      return !sidebar.collapsedGroups.contains(group)
+    }
   }
 
   func isRepositoryExpanded(_ repositoryID: Repository.ID) -> Bool {
@@ -7188,7 +7239,11 @@ extension RepositoriesFeature.State {
     // Equality-gate the write so branch-flutter reloads don't re-encode
     // `sidebar.json` on every tick.
     guard rebuilt != sidebar.sections else { return }
-    $sidebar.withLock { sidebar in sidebar.sections = rebuilt }
+    $sidebar.withLock { sidebar in
+      sidebar.sections = rebuilt
+      // A removed repository can take the last member of a collapsed group.
+      sidebar.pruneCollapsedGroups()
+    }
   }
 
   /// Prunes each curated bucket in place: drops the main worktree (it renders in
@@ -7346,13 +7401,14 @@ nonisolated extension SidebarState {
       if let pinned = section.buckets[.pinned], !pinned.items.isEmpty {
         preservedBuckets[.pinned] = pinned
       }
-      let hasCustomization = section.title != nil || section.color != nil
+      let hasCustomization = section.title != nil || section.color != nil || section.group != nil
       guard !preservedBuckets.isEmpty || hasCustomization else { continue }
       rebuilt[repoID] = .init(
         collapsed: false,
         buckets: preservedBuckets,
         title: section.title,
         color: section.color,
+        group: section.group,
       )
     }
   }
