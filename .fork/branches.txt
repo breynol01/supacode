@@ -2,7 +2,9 @@
 fork/tooling
 fork/no-auto-update
 fork/browser-pane
+fork/link-routing
 fork/background-work
 fork/ghostty-renderer-fixes
 fork/sidebar-folders
 fork/sidebar-groups
+fork/hyperlinks-env
