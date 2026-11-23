@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import Sharing
 import SupacodeSettingsShared
 
 private nonisolated let conduitLogger = SupaLogger("LayoutConduit")
@@ -15,6 +16,12 @@ struct LayoutSurfaceConduit {
   /// Handles a zmx-backed surface that closed without an explicit user close;
   /// the integration layer probes the session and spares, kills, or reattaches.
   let handleUnexpectedZmxClose: (GhosttySurfaceView) -> Void
+  /// Opens `url` in a browser split beside the pane holding `ContentID`;
+  /// returns false when it couldn't, so the system browser takes the link.
+  var openInBrowserPane: (URL, ContentID) -> Bool = { _, _ in false }
+  /// Opens a clicked file reference through the worktree's open-file hook,
+  /// with its line when the reference had one; false lets the system open it.
+  var openFile: (URL, Int?) -> Bool = { _, _ in false }
 
   func wire(_ view: GhosttySurfaceView, contentID: ContentID) {
     let surfaceID = contentID.rawValue
@@ -42,6 +49,15 @@ struct LayoutSurfaceConduit {
     view.bridge.onTitleChange = { [weak view] title in
       guard let view, isLive(view) else { return }
       host.updateReportedTitle(for: contentID, title: title)
+    }
+    let openInBrowserPane = openInBrowserPane
+    let openFile = openFile
+    view.bridge.onOpenURL = { [weak view] request in
+      guard let view, isLive(view) else { return false }
+      if request.url.isFileURL { return openFile(request.url, request.line) }
+      @Shared(.settingsFile) var settingsFile: SettingsFile
+      guard settingsFile.global.terminalLinkTarget.opensInBrowserPane(request.url) else { return false }
+      return openInBrowserPane(request.url, contentID)
     }
     // Layout topology belongs to the app's own chords, menus, and palette;
     // a Ghostty keybind for it is consumed and ignored so the terminal can

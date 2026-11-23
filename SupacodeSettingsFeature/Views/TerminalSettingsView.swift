@@ -77,6 +77,16 @@ public struct TerminalSettingsView: View {
       } footer: {
         Text("Transparent background preferences only apply to the Supacode theme.")
       }
+      Section("Links") {
+        Picker(selection: $store.terminalLinkTarget) {
+          ForEach(TerminalLinkTarget.allCases, id: \.self) { target in
+            DefaultTaggedLabel(label: target.label, isDefault: target == .systemBrowser).tag(target)
+          }
+        } label: {
+          Text("Open links in")
+          Text("Where \u{2318}-clicked web links open. File paths always open in their default app.")
+        }
+      }
       Section("Persistence") {
         Toggle(isOn: $store.terminateSessionsOnQuit) {
           Text("Terminate sessions on quit")

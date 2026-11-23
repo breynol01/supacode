@@ -18,10 +18,10 @@ public struct GlobalScriptsSettingsView: View {
         LifecycleScriptSection(
           text: $store.openFileScript,
           title: "Open File Script",
-          subtitle: "Fallback for opening a double-clicked file when the repository sets none.",
+          subtitle: "Fallback for opening a double-clicked or \u{2318}-clicked file when the repository sets none.",
           icon: "arrow.up.forward.app",
           iconColor: .teal,
-          footerExample: "nvim \"$SUPACODE_FILE_PATH\""
+          footerExample: "nvim +\"${SUPACODE_FILE_LINE:-1}\" \"$SUPACODE_FILE_PATH\""
         )
 
         Section(

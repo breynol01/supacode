@@ -1158,6 +1158,29 @@ struct SettingsFilePersistenceTests {
     #expect(HoverFocusMode.terminals.rawValue == "terminals")
   }
 
+  @Test(.dependencies) func decodesUnrecognizedTerminalLinkTargetAsDefaultWithoutDiscardingTheFile() throws {
+    let json = """
+      {"appearanceMode":"light","updatesAutomaticallyCheckForUpdates":false,\
+      "updatesAutomaticallyDownloadUpdates":false,"terminalLinkTarget":"someFutureTarget"}
+      """
+    let storage = MutableTestStorage(initialData: Data(json.utf8))
+
+    let settings: SettingsFile = withDependencies {
+      $0.settingsFileStorage = storage.storage
+    } operation: {
+      @Shared(.settingsFile) var settings: SettingsFile
+      return settings
+    }
+
+    #expect(settings.global.terminalLinkTarget == .systemBrowser)
+    #expect(settings.global.appearanceMode == .light)
+  }
+
+  @Test func terminalLinkTargetRawValuesAreStableAcrossReleases() {
+    #expect(TerminalLinkTarget.systemBrowser.rawValue == "systemBrowser")
+    #expect(TerminalLinkTarget.browserPane.rawValue == "browserPane")
+  }
+
   @Test(.dependencies) func roundTripsExplicitNotificationRetentionLimit() throws {
     let storage = SettingsTestStorage()
 
