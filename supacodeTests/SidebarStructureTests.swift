@@ -1513,16 +1513,7 @@ struct SidebarStructureTests {
   )
 
   private func repositorySectionIDs(in structure: SidebarStructure) -> [Repository.ID] {
-    structure.sections.compactMap { section in
-      switch section {
-      case .repository(let id, _), .folder(let id, _),
-        .failedRepository(let id, _, _, _, _),
-        .environmentBlockedRepository(let id, _, _, _):
-        return id
-      case .highlight, .placeholder:
-        return nil
-      }
-    }
+    structure.sections.compactMap(SidebarStructure.repositoryID(of:))
   }
 
   private func makeRepository(path: String) -> Repository {
@@ -2134,5 +2125,147 @@ struct SidebarStructureTests {
     // Archive spares the main worktree; delete spares only the non-idle row.
     #expect(state.sidebarSelectionSlice.archiveTargets.map(\.worktreeID) == [idle.id])
     #expect(state.sidebarSelectionSlice.deleteTargets.map(\.worktreeID) == [main.id, idle.id])
+  }
+}
+
+// MARK: - Repository groups.
+
+extension SidebarStructureTests {
+  private func groupState(
+    _ repositories: [Repository],
+    groups: [Repository.ID: String],
+    collapsed: Set<String> = []
+  ) -> RepositoriesFeature.State {
+    var state = makeState(repositories: repositories)
+    state.$sidebar.withLock { sidebar in
+      var reordered: OrderedDictionary<Repository.ID, SidebarState.Section> = [:]
+      for repository in repositories {
+        var section = sidebar.sections[repository.id] ?? .init()
+        section.group = groups[repository.id]
+        reordered[repository.id] = section
+      }
+      sidebar.sections = reordered
+      sidebar.collapsedGroups = collapsed
+    }
+    return state
+  }
+
+  private func sectionIDs(in structure: SidebarStructure) -> [SidebarStructure.Section.SectionID] {
+    structure.sections.map(\.id)
+  }
+
+  @Test func groupsRenderAlphabeticallyBeforeUngroupedWithMembersInPersistedOrder() {
+    let work = makeRepository(path: "/tmp/work")
+    let synth = makeRepository(path: "/tmp/synth")
+    let loose = makeRepository(path: "/tmp/loose")
+    let bitwig = makeRepository(path: "/tmp/bitwig")
+    let state = groupState(
+      [work, synth, loose, bitwig],
+      groups: [work.id: "Work", synth.id: "music", bitwig.id: "music"]
+    )
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    #expect(
+      sectionIDs(in: structure) == [
+        .repositoryGroup("music"), .repository(synth.id), .repository(bitwig.id),
+        .repositoryGroup("Work"), .repository(work.id),
+        .repository(loose.id),
+      ])
+    #expect(structure.reorderableRepositoryIDs == [work.id, synth.id, loose.id, bitwig.id])
+    #expect(structure.repositoryGroupByID == [work.id: "Work", synth.id: "music", bitwig.id: "music"])
+  }
+
+  @Test func sortByNameAppliesWithinEachGroup() {
+    let zebra = makeRepository(path: "/tmp/zebra")
+    let alpha = makeRepository(path: "/tmp/alpha")
+    let mango = makeRepository(path: "/tmp/mango")
+    let state = groupState([zebra, alpha, mango], groups: [zebra.id: "G", alpha.id: "G"])
+
+    let structure = state.computeSidebarStructure(
+      groupPinned: false, groupActive: false, sectionSort: .alphabetical)
+
+    #expect(
+      sectionIDs(in: structure) == [
+        .repositoryGroup("G"), .repository(alpha.id), .repository(zebra.id), .repository(mango.id),
+      ])
+  }
+
+  @Test func collapsedGroupHidesMembersAndCarriesLeafIDs() {
+    let synth = makeRepository(path: "/tmp/synth")
+    let loose = makeRepository(path: "/tmp/loose")
+    let state = groupState([synth, loose], groups: [synth.id: "Music"], collapsed: ["Music"])
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    let synthMain = synth.worktrees.first!.id
+    let looseMain = loose.worktrees.first!.id
+    #expect(
+      structure.sections.first
+        == .repositoryGroup(name: "Music", isCollapsed: true, memberCount: 1, leafIDs: [synthMain]))
+    #expect(sectionIDs(in: structure) == [.repositoryGroup("Music"), .repository(loose.id)])
+    // Hidden members never get a hotkey slot.
+    #expect(structure.slotByID[synthMain] == nil)
+    #expect(structure.slotByID[looseMain] == 0)
+    #expect(!state.expandedRepositoryIDs.contains(synth.id))
+  }
+
+  @Test func expandedGroupHeaderCarriesNoLeafIDs() {
+    let synth = makeRepository(path: "/tmp/synth")
+    let state = groupState([synth], groups: [synth.id: "Music"])
+
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    #expect(
+      structure.sections.first == .repositoryGroup(name: "Music", isCollapsed: false, memberCount: 1, leafIDs: []))
+  }
+
+  @Test func repositoryMoveWithoutGroupsKeepsLegacyMapping() {
+    let repoA = makeRepository(path: "/tmp/a")
+    let repoB = makeRepository(path: "/tmp/b")
+    let repoC = makeRepository(path: "/tmp/c")
+    let state = groupState([repoA, repoB, repoC], groups: [:])
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+
+    let toEnd = structure.repositoryMove(offsets: [0], destination: 3)
+    #expect(toEnd?.offsets == [0])
+    #expect(toEnd?.destination == 3)
+    let toMiddle = structure.repositoryMove(offsets: [2], destination: 1)
+    #expect(toMiddle?.offsets == [2])
+    #expect(toMiddle?.destination == 1)
+  }
+
+  @Test func repositoryMoveStaysInsideGroup() {
+    // Sections: [hdr G, a, b, hdr H, c, d(ungrouped)]; persisted order a, b, c, d.
+    let repoA = makeRepository(path: "/tmp/a")
+    let repoB = makeRepository(path: "/tmp/b")
+    let repoC = makeRepository(path: "/tmp/c")
+    let repoD = makeRepository(path: "/tmp/d")
+    let state = groupState([repoA, repoB, repoC, repoD], groups: [repoA.id: "G", repoB.id: "G", repoC.id: "H"])
+    let structure = state.computeSidebarStructure(groupPinned: false, groupActive: false)
+    #expect(
+      sectionIDs(in: structure) == [
+        .repositoryGroup("G"), .repository(repoA.id), .repository(repoB.id),
+        .repositoryGroup("H"), .repository(repoC.id), .repository(repoD.id),
+      ])
+
+    // b to the top of G (gap below the G header, above a).
+    let toTop = structure.repositoryMove(offsets: [2], destination: 1)
+    #expect(toTop?.offsets == [1])
+    #expect(toTop?.destination == 0)
+    // a to the bottom of G (gap above the H header, below b).
+    let toBottom = structure.repositoryMove(offsets: [1], destination: 3)
+    #expect(toBottom?.offsets == [0])
+    #expect(toBottom?.destination == 2)
+    // a into H, or into the ungrouped tail, is rejected.
+    #expect(structure.repositoryMove(offsets: [1], destination: 5) == nil)
+    #expect(structure.repositoryMove(offsets: [1], destination: 6) == nil)
+    // d above c (into H) is rejected; d to the end stays ungrouped.
+    #expect(structure.repositoryMove(offsets: [5], destination: 4) == nil)
+    let dToEnd = structure.repositoryMove(offsets: [5], destination: 6)
+    #expect(dToEnd?.offsets == [3])
+    #expect(dToEnd?.destination == 4)
+    // Group headers are never sources.
+    #expect(structure.repositoryMove(offsets: [0], destination: 3) == nil)
   }
 }

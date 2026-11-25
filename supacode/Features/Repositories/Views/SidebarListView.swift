@@ -125,56 +125,14 @@ struct SidebarListView: View {
     }
   }
 
-  /// SwiftUI's `.onMove` reports offsets in the flat ForEach data array. The
-  /// structure exposes `reorderableRepositoryIDs` so we can translate a flat
-  /// move into the repository index space the `.repositoriesMoved` reducer
-  /// expects. Non-repo sections carry `.moveDisabled(true)` so they can't be
-  /// sources of a drag; the destination clamps below.
+  /// Translation and group rules live in `SidebarStructure.repositoryMove`.
   private func handleRepositoryMove(
     offsets: IndexSet,
     destination: Int,
     structure: SidebarStructure
   ) {
-    let repoIDs = structure.reorderableRepositoryIDs
-    guard !repoIDs.isEmpty else { return }
-    let sourceFlat = offsets.sorted()
-    let sectionsCount = structure.sections.count
-    // Map flat section indices to repo indices via SectionID matching. Skip
-    // any flat offset that doesn't correspond to a reorderable repo section.
-    var repoOffsets = IndexSet()
-    for index in sourceFlat where index < sectionsCount {
-      let section = structure.sections[index]
-      switch section {
-      case .repository(let repositoryID, _),
-        .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _),
-        .environmentBlockedRepository(let repositoryID, _, _, _):
-        if let repoIndex = repoIDs.firstIndex(of: repositoryID) {
-          repoOffsets.insert(repoIndex)
-        }
-      case .highlight, .placeholder:
-        continue
-      }
-    }
-    guard !repoOffsets.isEmpty else { return }
-    let clampedDestination = min(max(destination, 0), sectionsCount)
-    let repoDestination: Int
-    if clampedDestination >= sectionsCount {
-      repoDestination = repoIDs.count
-    } else {
-      let section = structure.sections[clampedDestination]
-      switch section {
-      case .repository(let repositoryID, _),
-        .folder(let repositoryID, _),
-        .failedRepository(let repositoryID, _, _, _, _),
-        .environmentBlockedRepository(let repositoryID, _, _, _):
-        repoDestination = repoIDs.firstIndex(of: repositoryID) ?? repoIDs.count
-      case .highlight, .placeholder:
-        // Dropping above the highlight prefix collapses to "before the first repo".
-        repoDestination = 0
-      }
-    }
-    store.send(.repositoriesMoved(repoOffsets, repoDestination))
+    guard let move = structure.repositoryMove(offsets: offsets, destination: destination) else { return }
+    store.send(.repositoriesMoved(move.offsets, move.destination))
   }
 
   @MainActor
@@ -219,6 +177,45 @@ private struct SidebarSectionDispatcher: View {
         shortcutHintByID: shortcutHintByID
       )
       .moveDisabled(true)
+    case .repositoryGroup(let name, let isCollapsed, let memberCount, let leafIDs):
+      SidebarRepositoryGroupHeader(
+        name: name,
+        isCollapsed: isCollapsed,
+        memberCount: memberCount,
+        leafIDs: leafIDs,
+        store: store
+      )
+      .moveDisabled(true)
+    default:
+      // Repository-backed sections; members of a group render indented.
+      SidebarRepositorySectionView(
+        section: section,
+        structure: structure,
+        shortcutHintByID: shortcutHintByID,
+        store: store,
+        terminalManager: terminalManager
+      )
+      .environment(
+        \.sidebarGroupIndent,
+        SidebarStructure.repositoryID(of: section).flatMap { structure.repositoryGroupByID[$0] } == nil
+          ? 0 : SidebarNestLayout.indentStep
+      )
+    }
+  }
+}
+
+/// Renders one repository-backed section (failed, blocked, folder, git).
+private struct SidebarRepositorySectionView: View {
+  let section: SidebarStructure.Section
+  let structure: SidebarStructure
+  let shortcutHintByID: [Worktree.ID: String]
+  @Bindable var store: StoreOf<RepositoriesFeature>
+  let terminalManager: WorktreeTerminalManager
+
+  var body: some View {
+    switch section {
+    case .placeholder, .highlight, .repositoryGroup:
+      EmptyView()
     case .failedRepository(let repositoryID, let rootURL, let customTitle, let color, let isRemote):
       SidebarFailedRepositorySection(
         repositoryID: repositoryID,
@@ -334,6 +331,7 @@ private struct SidebarHoistSummaryRow: View {
   let repositoryName: String
   let summary: SidebarHoistSummary
   let store: StoreOf<RepositoriesFeature>
+  @Environment(\.sidebarGroupIndent) private var groupIndent
 
   var body: some View {
     Button {
@@ -354,7 +352,7 @@ private struct SidebarHoistSummaryRow: View {
       .contentShape(.interaction, .rect)
     }
     .buttonStyle(.plain)
-    .listRowInsets(.leading, 0)
+    .listRowInsets(.leading, groupIndent)
     .listRowInsets(.trailing, 4)
     .listRowInsets(.vertical, 4)
     .moveDisabled(true)
@@ -393,6 +391,8 @@ private struct SidebarSectionActionsView: View {
       }
       .help("Set a custom title or color")
       .disabled(isRemovingRepository)
+      SidebarRepositoryGroupMenu(repositoryIDs: [repositoryID], store: store)
+        .disabled(isRemovingRepository)
       if isRemote {
         Button("Edit Connection…", systemImage: "wifi") {
           store.send(.requestEditRemoteRepository(repositoryID))
