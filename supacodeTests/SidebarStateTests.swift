@@ -416,6 +416,73 @@ struct SidebarStateTests {
     #expect(decoded.color == nil)
   }
 
+  // MARK: - Folder.
+
+  @Test func itemRoundTripPreservesFolder() throws {
+    let original = SidebarState.Item(folder: "iOS widgets")
+    let decoded = try JSONDecoder().decode(
+      SidebarState.Item.self,
+      from: JSONEncoder().encode(original)
+    )
+    #expect(decoded.folder == "iOS widgets")
+  }
+
+  @Test func itemOmitsFolderKeyWhenUnset() throws {
+    let json = String(bytes: try JSONEncoder().encode(SidebarState.Item()), encoding: .utf8) ?? ""
+    #expect(!json.contains("folder"))
+  }
+
+  @Test func itemDecodingNormalizesHandEditedFolder() throws {
+    let data = Data(#"{ "folder": "  ios/widgets  " }"#.utf8)
+    let decoded = try JSONDecoder().decode(SidebarState.Item.self, from: data)
+    #expect(decoded.folder == "ios widgets")
+    let blank = try JSONDecoder().decode(SidebarState.Item.self, from: Data(#"{ "folder": "   " }"#.utf8))
+    #expect(blank.folder == nil)
+  }
+
+  @Test func setFolderKeepsBucketAndCustomization() {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: repoA, bucket: .pinned, item: .init(title: "T", color: .red))
+
+    state.setFolder(" Widgets ", worktree: "wt-1", in: repoA)
+
+    let item = state.sections[repoA]?.buckets[.pinned]?.items["wt-1"]
+    #expect(item?.folder == "Widgets")
+    #expect(item?.title == "T")
+    #expect(item?.color == .red)
+
+    state.setFolder("", worktree: "wt-1", in: repoA)
+    #expect(state.sections[repoA]?.buckets[.pinned]?.items["wt-1"]?.folder == nil)
+  }
+
+  @Test func setFolderFallsBackToUnpinnedWhenRowMissing() {
+    var state = SidebarState()
+    state.setFolder("Widgets", worktree: "wt-1", in: repoA)
+    #expect(state.sections[repoA]?.buckets[.unpinned]?.items["wt-1"]?.folder == "Widgets")
+  }
+
+  @Test func folderSurvivesArchiveUnarchiveAndPin() {
+    var state = SidebarState()
+    state.insert(worktree: "wt-1", in: repoA, bucket: .unpinned, item: .init(folder: "Widgets"))
+
+    state.archive(worktree: "wt-1", in: repoA, from: .unpinned, at: Date(timeIntervalSince1970: 1))
+    #expect(state.sections[repoA]?.buckets[.archived]?.items["wt-1"]?.folder == "Widgets")
+    state.unarchive(worktree: "wt-1", in: repoA)
+    #expect(state.sections[repoA]?.buckets[.unpinned]?.items["wt-1"]?.folder == "Widgets")
+    state.pin(worktree: "wt-1", in: repoA)
+    #expect(state.sections[repoA]?.buckets[.pinned]?.items["wt-1"]?.folder == "Widgets")
+  }
+
+  @Test func folderNamesAreDistinctAndSortedAcrossBuckets() {
+    var state = SidebarState()
+    state.insert(worktree: "a", in: repoA, bucket: .pinned, item: .init(folder: "beta"))
+    state.insert(worktree: "b", in: repoA, bucket: .unpinned, item: .init(folder: "Alpha"))
+    state.insert(worktree: "c", in: repoA, bucket: .archived, item: .init(folder: "beta"))
+    state.insert(worktree: "d", in: repoB, bucket: .unpinned, item: .init(folder: "other"))
+
+    #expect(state.folderNames(in: repoA) == ["Alpha", "beta"])
+  }
+
   // MARK: - Archive / unarchive customization carry.
 
   @Test func archiveCarriesTitleAndColorFromSourceBucket() {
