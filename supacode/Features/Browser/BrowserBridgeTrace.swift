@@ -11,8 +11,14 @@ nonisolated enum BrowserBridgeTrace {
   private static let queue = DispatchQueue(label: "app.supabit.supacode.browser-bridge-trace")
   private static let maxBytes = 1_000_000
 
+  /// Unit tests drive the bridge in the test host; keep them out of the file
+  /// that diagnoses real attempts.
+  private static let isTestHost =
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
   static func record(_ message: String) {
     logger.info(message)
+    guard !isTestHost else { return }
     let line = "\(Date.now.formatted(.iso8601.time(includingFractionalSeconds: true))) \(message)\n"
     queue.async { append(line) }
   }
