@@ -35,8 +35,8 @@ final class BrowserContent: TabContent {
     configuration.websiteDataStore = .default()
     let toolbar = browserToolbar
     let proxy = BrowserScriptMessageProxy { [weak toolbar] message in
-      guard let toolbar, BrowserWebAuthnProbe.parse(message.body) != nil else { return }
-      toolbar.passkeyRequestURL = message.webView?.url ?? toolbar.currentURL
+      guard let toolbar, let kind = BrowserWebAuthnProbe.parse(message.body) else { return }
+      toolbar.reportPasskey(kind, at: message.webView?.url ?? toolbar.currentURL)
     }
     configuration.userContentController.addUserScript(BrowserWebAuthnProbe.makeUserScript())
     configuration.userContentController.add(proxy, name: BrowserWebAuthnProbe.handlerName)
@@ -66,6 +66,7 @@ final class BrowserContent: TabContent {
     self.webView = nil
     browserToolbar.webView = nil
     browserToolbar.passkeyRequestURL = nil
+    browserToolbar.cancelSignIn()
   }
 
   func snapshot() -> ContentSnapshot {
@@ -151,6 +152,161 @@ final class BrowserToolbar: TabContentToolbar {
     NSWorkspace.shared.open(url)
     passkeyRequestURL = nil
   }
+
+  // MARK: Chrome sign-in bridge
+
+  enum SignIn: Equatable {
+    case idle
+    /// The Chrome popup is open on `start`; `popupWindow` is its AppleScript id
+    /// when Automation access allowed identifying it.
+    case waiting(start: URL, popupWindow: Int?)
+    case importing
+    case failed(String)
+  }
+
+  var signIn: SignIn = .idle
+  /// Hosts whose Chrome sign-in was imported; their availability checks no
+  /// longer raise the banner (an explicit create/get still does).
+  private var importedHosts: Set<String> = []
+
+  func reportPasskey(_ kind: BrowserWebAuthnProbe.Kind, at url: URL?) {
+    if kind == .detect, let host = url?.host()?.lowercased(), importedHosts.contains(host) {
+      return
+    }
+    passkeyRequestURL = url
+  }
+  private var popupURL: URL?
+  private var signInTask: Task<Void, Never>?
+
+  /// Opens the page in a small Chrome app window where 1Password and the
+  /// system passkey sheet work, then carries the resulting cookies back.
+  func signInWithChrome() {
+    guard let start = passkeyRequestURL ?? webView?.url ?? currentURL else { return }
+    signInTask?.cancel()
+    popupURL = nil
+    signIn = .waiting(start: start, popupWindow: nil)
+    let profile = ChromeCookieStore.lastUsedProfile()
+    signInTask = Task { [weak self] in
+      let window = await ChromePopup.open(start, profile: profile)
+      guard let self, !Task.isCancelled, case .waiting = self.signIn else { return }
+      self.signIn = .waiting(start: start, popupWindow: window)
+      guard let window else { return }
+      await self.watchPopup(window, start: start, profile: profile)
+    }
+  }
+
+  /// Polls the popup: it finishes on its own once the popup lands on a
+  /// signed-in page of the same site, or when the user closes it.
+  private func watchPopup(_ window: Int, start: URL, profile: String) async {
+    var settledURL: URL?
+    while !Task.isCancelled {
+      try? await Task.sleep(for: .seconds(1))
+      guard case .waiting = signIn else { return }
+      guard let lookup = ChromePopup.currentURL(ofWindow: window) else { continue }
+      guard let url = lookup else {
+        await importCookies(start: start, profile: profile, closing: nil)
+        return
+      }
+      popupURL = url
+      if BrowserPasskeyBridge.looksSignedIn(start: start, current: url) {
+        // One more tick on the same URL rides out redirect chains.
+        if settledURL == url {
+          await importCookies(start: start, profile: profile, closing: window)
+          return
+        }
+        settledURL = url
+      } else {
+        settledURL = nil
+      }
+    }
+  }
+
+  /// "Done" in the banner: import now, whatever the popup shows.
+  func finishSignIn() {
+    guard case .waiting(let start, let window) = signIn else { return }
+    signInTask?.cancel()
+    let profile = ChromeCookieStore.lastUsedProfile()
+    signInTask = Task { [weak self] in
+      await self?.importCookies(start: start, profile: profile, closing: window)
+    }
+  }
+
+  func cancelSignIn() {
+    signInTask?.cancel()
+    signInTask = nil
+    signIn = .idle
+  }
+
+  private func importCookies(start: URL, profile: String, closing window: Int?) async {
+    signIn = .importing
+    var hosts = ChromeCookieStore.hostKeys(for: start.host() ?? "")
+    if let popupHost = popupURL?.host(), BrowserPasskeyBridge.isSameSite(start, popupURL) {
+      hosts.formUnion(ChromeCookieStore.hostKeys(for: popupHost))
+    }
+    let result = await Task.detached { [hosts] in
+      Result { try ChromeCookieStore.cookies(forHosts: hosts, profile: profile) }
+    }.value
+    switch result {
+    case .failure(let error):
+      signIn = .failed(BrowserPasskeyBridge.message(for: error))
+    case .success(let cookies) where cookies.isEmpty:
+      signIn = .failed(
+        "Chrome has no sign-in for \(start.host() ?? "this site") yet. Finish signing in there.")
+    case .success(let cookies):
+      guard let webView else {
+        signIn = .idle
+        return
+      }
+      let store = webView.configuration.websiteDataStore.httpCookieStore
+      for cookie in cookies {
+        await store.setCookie(cookie)
+      }
+      if let window { ChromePopup.close(window: window) }
+      let destination = BrowserPasskeyBridge.isSameSite(start, popupURL) ? popupURL ?? start : start
+      webView.load(URLRequest(url: destination))
+      importedHosts.insert((start.host() ?? "").lowercased())
+      if let host = destination.host() { importedHosts.insert(host.lowercased()) }
+      passkeyRequestURL = nil
+      signIn = .idle
+      NSApp.activate()
+    }
+  }
+}
+
+/// Pure decisions behind the Chrome sign-in bridge.
+nonisolated enum BrowserPasskeyBridge {
+  private static let authPathMarkers = [
+    "login", "logon", "signin", "sign-in", "sign_in", "session", "auth", "sso", "saml",
+    "two-factor", "2fa", "mfa", "webauthn", "passkey", "challenge", "verify", "consent",
+  ]
+
+  static func isSameSite(_ lhs: URL?, _ rhs: URL?) -> Bool {
+    guard let lhs = lhs?.host(), let rhs = rhs?.host() else { return false }
+    return !ChromeCookieStore.hostKeys(for: lhs).isDisjoint(
+      with: ChromeCookieStore.hostKeys(for: rhs))
+  }
+
+  /// The popup has left the sign-in flow: same site, a different page, and no
+  /// sign-in marker in its path.
+  static func looksSignedIn(start: URL, current: URL) -> Bool {
+    guard isSameSite(start, current) else { return false }
+    let path = current.path().lowercased()
+    guard path != start.path().lowercased() else { return false }
+    return !authPathMarkers.contains { path.contains($0) }
+  }
+
+  static func message(for error: Error) -> String {
+    switch error as? ChromeCookieStore.Failure {
+    case .keychainDenied:
+      "Supacode needs Keychain access to \"Chrome Safe Storage\" to bring the sign-in back."
+    case .cookieFileMissing, .chromeNotInstalled:
+      "Couldn't find Chrome's cookies for your last-used profile."
+    case .database(let detail):
+      "Couldn't read Chrome's cookies (\(detail))."
+    case nil:
+      error.localizedDescription
+    }
+  }
 }
 
 /// Turns typed text into a URL: a scheme passes through, a bare host gets
@@ -224,7 +380,7 @@ private struct BrowserURLBar: View {
   var body: some View {
     VStack(spacing: 0) {
       urlRow
-      if toolbar.passkeyRequestURL != nil {
+      if toolbar.passkeyRequestURL != nil || toolbar.signIn != .idle {
         BrowserPasskeyBanner(toolbar: toolbar)
       }
     }
@@ -236,37 +392,68 @@ private struct BrowserURLBar: View {
   }
 }
 
-/// Shown when the page asked for a passkey: the web view cannot reach the
-/// system passkey sheet, so offer the default browser instead.
+/// Shown when the page asked for a passkey. The web view cannot reach the
+/// system passkey sheet, so the sign-in runs in a Chrome popup and its cookies
+/// come back to the pane.
 private struct BrowserPasskeyBanner: View {
   let toolbar: BrowserToolbar
 
   var body: some View {
     HStack(spacing: 8) {
-      Label {
-        Text(
-          "This site uses passkeys, which don't work in Supacode's browser (1Password included).")
-      } icon: {
-        Image(systemName: "person.badge.key")
+      switch toolbar.signIn {
+      case .idle:
+        message("This site uses passkeys, which Supacode's browser can't reach directly.")
+        Spacer(minLength: 8)
+        if ChromePopup.isInstalled {
+          Button("Sign in with Chrome") { toolbar.signInWithChrome() }
+            .help(
+              "Sign in through a Chrome popup (passkeys and 1Password work there), then continue here"
+            )
+        } else {
+          Button("Open in Browser") { toolbar.openInDefaultBrowser() }
+            .help("Open this page in your default browser to sign in with a passkey")
+        }
+        dismissButton { toolbar.passkeyRequestURL = nil }
+      case .waiting:
+        ProgressView().controlSize(.small)
+        message("Finish signing in in the Chrome window. This page continues once you're in.")
+        Spacer(minLength: 8)
+        Button("Done") { toolbar.finishSignIn() }
+          .help("Bring the Chrome sign-in into this page now")
+        dismissButton { toolbar.cancelSignIn() }
+      case .importing:
+        ProgressView().controlSize(.small)
+        message("Bringing your sign-in over from Chrome…")
+        Spacer(minLength: 8)
+      case .failed(let reason):
+        message(reason)
+        Spacer(minLength: 8)
+        Button("Try Again") { toolbar.signInWithChrome() }
+          .help("Reopen the Chrome sign-in popup")
+        dismissButton { toolbar.cancelSignIn() }
       }
-      .font(.callout)
-      .foregroundStyle(.secondary)
-      Spacer(minLength: 8)
-      Button("Open in Browser") {
-        toolbar.openInDefaultBrowser()
-      }
-      .help("Open this page in your default browser to sign in with a passkey")
-      Button {
-        toolbar.passkeyRequestURL = nil
-      } label: {
-        Label("Dismiss", systemImage: "xmark").labelStyle(.iconOnly)
-      }
-      .buttonStyle(.borderless)
-      .help("Dismiss")
     }
     .controlSize(.small)
     .padding(.horizontal, 8)
     .padding(.vertical, 4)
     .background(.bar)
+  }
+
+  private func message(_ text: String) -> some View {
+    Label {
+      Text(text)
+    } icon: {
+      Image(systemName: "person.badge.key")
+    }
+    .font(.callout)
+    .foregroundStyle(.secondary)
+  }
+
+  private func dismissButton(_ action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+      Label("Dismiss", systemImage: "xmark").labelStyle(.iconOnly)
+    }
+    .buttonStyle(.borderless)
+    .help("Dismiss")
   }
 }
