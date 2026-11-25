@@ -33,6 +33,13 @@ final class BrowserContent: TabContent {
     guard webView == nil else { return }
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .default()
+    let toolbar = browserToolbar
+    let proxy = BrowserScriptMessageProxy { [weak toolbar] message in
+      guard let toolbar, BrowserWebAuthnProbe.parse(message.body) != nil else { return }
+      toolbar.passkeyRequestURL = message.webView?.url ?? toolbar.currentURL
+    }
+    configuration.userContentController.addUserScript(BrowserWebAuthnProbe.makeUserScript())
+    configuration.userContentController.add(proxy, name: BrowserWebAuthnProbe.handlerName)
     let view = WKWebView(frame: .zero, configuration: configuration)
     view.allowsBackForwardNavigationGestures = true
     view.allowsMagnification = true
@@ -52,10 +59,13 @@ final class BrowserContent: TabContent {
     guard let webView else { return }
     state.url = webView.url ?? state.url
     observations.removeAll()
+    webView.configuration.userContentController.removeScriptMessageHandler(
+      forName: BrowserWebAuthnProbe.handlerName)
     webView.stopLoading()
     webView.removeFromSuperview()
     self.webView = nil
     browserToolbar.webView = nil
+    browserToolbar.passkeyRequestURL = nil
   }
 
   func snapshot() -> ContentSnapshot {
@@ -75,7 +85,13 @@ final class BrowserContent: TabContent {
         MainActor.assumeIsolated { chrome.isWorking = view.isLoading }
       },
       view.observe(\.url, options: [.initial, .new]) { view, _ in
-        MainActor.assumeIsolated { toolbar.currentURL = view.url }
+        MainActor.assumeIsolated {
+          toolbar.currentURL = view.url
+          if BrowserWebAuthnProbe.shouldClear(banner: toolbar.passkeyRequestURL, current: view.url)
+          {
+            toolbar.passkeyRequestURL = nil
+          }
+        }
       },
       view.observe(\.canGoBack, options: [.initial, .new]) { view, _ in
         MainActor.assumeIsolated { toolbar.canGoBack = view.canGoBack }
@@ -107,6 +123,8 @@ final class BrowserToolbar: TabContentToolbar {
   // Weak: `BrowserContent` is the sole owner of the view.
   weak var webView: WKWebView?
   var currentURL: URL?
+  /// Set when the page asked for a passkey the web view cannot provide.
+  var passkeyRequestURL: URL?
   var canGoBack = false
   var canGoForward = false
 
@@ -124,6 +142,14 @@ final class BrowserToolbar: TabContentToolbar {
   func load(_ text: String) {
     guard let url = BrowserURL.resolve(text) else { return }
     webView?.load(URLRequest(url: url))
+  }
+
+  /// Hands the page to the system default browser, where passkeys and
+  /// password-manager extensions work.
+  func openInDefaultBrowser() {
+    guard let url = passkeyRequestURL ?? webView?.url ?? currentURL else { return }
+    NSWorkspace.shared.open(url)
+    passkeyRequestURL = nil
   }
 }
 
@@ -152,7 +178,7 @@ private struct BrowserURLBar: View {
   @State private var text = ""
   @FocusState private var isEditing: Bool
 
-  var body: some View {
+  private var urlRow: some View {
     HStack(spacing: 6) {
       Button {
         toolbar.webView?.goBack()
@@ -182,15 +208,64 @@ private struct BrowserURLBar: View {
           toolbar.load(text)
           isEditing = false
         }
+      Button {
+        toolbar.openInDefaultBrowser()
+      } label: {
+        Label("Open in Default Browser", systemImage: "safari").labelStyle(.iconOnly)
+      }
+      .help("Open in Default Browser (passkeys and password managers work there)")
     }
     .buttonStyle(.borderless)
     .controlSize(.small)
     .padding(.horizontal, 8)
     .padding(.vertical, 4)
+  }
+
+  var body: some View {
+    VStack(spacing: 0) {
+      urlRow
+      if toolbar.passkeyRequestURL != nil {
+        BrowserPasskeyBanner(toolbar: toolbar)
+      }
+    }
     .onAppear { text = toolbar.currentURL?.absoluteString ?? "" }
     .onChange(of: toolbar.currentURL) { _, url in
       guard !isEditing else { return }
       text = url?.absoluteString ?? ""
     }
+  }
+}
+
+/// Shown when the page asked for a passkey: the web view cannot reach the
+/// system passkey sheet, so offer the default browser instead.
+private struct BrowserPasskeyBanner: View {
+  let toolbar: BrowserToolbar
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Label {
+        Text("This site wants a passkey. Supacode's browser can't use passkeys or 1Password.")
+      } icon: {
+        Image(systemName: "person.badge.key")
+      }
+      .font(.callout)
+      .foregroundStyle(.secondary)
+      Spacer(minLength: 8)
+      Button("Open in Browser") {
+        toolbar.openInDefaultBrowser()
+      }
+      .help("Open this page in your default browser to sign in with a passkey")
+      Button {
+        toolbar.passkeyRequestURL = nil
+      } label: {
+        Label("Dismiss", systemImage: "xmark").labelStyle(.iconOnly)
+      }
+      .buttonStyle(.borderless)
+      .help("Dismiss")
+    }
+    .controlSize(.small)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    .background(.bar)
   }
 }
