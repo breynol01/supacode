@@ -151,6 +151,12 @@ struct GhosttyRuntimeBundledOverridesTests {
     #expect(overrides.contains("env = TERM_PROGRAM_VERSION=1.2.3"))
   }
 
+  /// Hyperlink-aware CLIs don't know `supacode`, so OSC 8 support is forced.
+  @Test func terminalProgramOverridesForceHyperlinks() {
+    let overrides = GhosttyRuntime.terminalProgramOverrides(version: "1.2.3")
+    #expect(overrides.contains("env = FORCE_HYPERLINK=1"))
+  }
+
   /// A missing or blank version still emits a placeholder, never Ghostty's.
   @Test func terminalProgramOverridesFallBackWhenVersionUnavailable() {
     for version: String? in [nil, "", "   "] {
