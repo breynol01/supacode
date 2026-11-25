@@ -87,8 +87,8 @@ final class BrowserContent: TabContent {
       view.observe(\.url, options: [.initial, .new]) { view, _ in
         MainActor.assumeIsolated {
           toolbar.currentURL = view.url
-          if BrowserWebAuthnProbe.shouldClear(banner: toolbar.passkeyRequestURL, current: view.url)
-          {
+          let banner = toolbar.passkeyRequestURL
+          if BrowserWebAuthnProbe.shouldClear(banner: banner, current: view.url) {
             toolbar.passkeyRequestURL = nil
           }
         }
