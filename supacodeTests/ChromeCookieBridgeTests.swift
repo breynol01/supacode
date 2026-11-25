@@ -109,4 +109,32 @@ struct ChromeCookieBridgeTests {
     let url = try #require(URL(string: "https://github.com/login/oauth?code=secret#frag"))
     #expect(BrowserPasskeyBridge.redacted(url) == "https://github.com/login/oauth")
   }
+
+  @Test func signInPagesAreRecognizedByPath() throws {
+    let check = { (text: String) in BrowserPasskeyBridge.isSignInPage(URL(string: text)!) }
+    #expect(check("https://app.hubspot.com/login/?loginRedirectUrl=x"))
+    #expect(check("https://github.com/login"))
+    #expect(!check("https://app.hubspot.com/contacts/1234567/objects/0-136/views/all/list"))
+  }
+
+  /// HubSpot: the login page redirects back to the record list once Chrome's
+  /// session applies; that list is "signed in" even with the login query.
+  @Test func hubSpotRecordListCountsAsSignedIn() throws {
+    let start = try #require(
+      URL(
+        string:
+          "https://app.hubspot.com/login/?loginRedirectUrl=https%3A%2F%2Fapp.hubspot.com%2Fcontacts"
+      ))
+    let list = try #require(
+      URL(string: "https://app.hubspot.com/contacts/1234567/objects/0-136/views/all/list"))
+    #expect(BrowserPasskeyBridge.looksSignedIn(start: start, current: list))
+  }
+
+  @MainActor
+  @Test func signInPageRaisesTheBanner() throws {
+    let toolbar = BrowserToolbar(contentID: ContentID())
+    let login = try #require(URL(string: "https://app.hubspot.com/login/"))
+    toolbar.paneNavigated(to: login)
+    #expect(toolbar.passkeyRequestURL == login)
+  }
 }

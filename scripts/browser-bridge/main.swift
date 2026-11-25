@@ -118,9 +118,42 @@ final class Loader: NSObject, WKNavigationDelegate {
   }
 }
 
-let port = Int(CommandLine.arguments.dropFirst().first ?? "") ?? 8766
+/// `popup <url>`: open a real site in the Chrome popup (last-used profile),
+/// log each page it lands on for 20s, then close it. No cookie reads.
+@MainActor
+enum PopupTrace {
+  static func run(_ url: URL) async -> Int32 {
+    let profile = ChromeCookieStore.lastUsedProfile()
+    guard let window = await ChromePopup.open(url, profile: profile) else {
+      print("FAIL popup window not identified")
+      return 1
+    }
+    print("ok   popup window=\(window) profile=\(profile)")
+    let opened = Date.now
+    var last: URL?
+    while Date.now.timeIntervalSince(opened) < 20 {
+      try? await Task.sleep(for: .milliseconds(500))
+      guard let lookup = ChromePopup.currentURL(ofWindow: window), let current = lookup else {
+        continue
+      }
+      if current != last {
+        print(
+          String(format: "%5.1fs ", Date.now.timeIntervalSince(opened))
+            + "\(current.host() ?? "")\(current.path())")
+        last = current
+      }
+    }
+    ChromePopup.close(window: window)
+    return 0
+  }
+}
+
+let arguments = Array(CommandLine.arguments.dropFirst())
 let app = NSApplication.shared
 Task { @MainActor in
-  exit(await Harness.run(port: port))
+  if arguments.first == "popup", arguments.count > 1, let url = URL(string: arguments[1]) {
+    exit(await PopupTrace.run(url))
+  }
+  exit(await Harness.run(port: Int(arguments.first ?? "") ?? 8766))
 }
 app.run()

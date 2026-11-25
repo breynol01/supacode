@@ -92,6 +92,7 @@ final class BrowserContent: TabContent {
           if BrowserWebAuthnProbe.shouldClear(banner: banner, current: view.url) {
             toolbar.passkeyRequestURL = nil
           }
+          toolbar.paneNavigated(to: view.url)
         }
       },
       view.observe(\.canGoBack, options: [.initial, .new]) { view, _ in
@@ -170,11 +171,7 @@ final class BrowserToolbar: TabContentToolbar {
       BrowserBridgeTrace.record("state \(BrowserPasskeyBridge.describe(signIn))")
       // Supacode sits in the background while the popup is up; App Nap would
       // stretch the 1s polls to 10s+, so opt out while a sign-in is running.
-      let busy =
-        switch signIn {
-        case .waiting, .importing: true
-        case .idle, .failed: false
-        }
+      let busy = isSigningIn
       if busy, napActivity == nil {
         napActivity = ProcessInfo.processInfo.beginActivity(
           options: [.userInitiated], reason: "Browser pane passkey sign-in")
@@ -185,9 +182,28 @@ final class BrowserToolbar: TabContentToolbar {
     }
   }
   private var napActivity: (any NSObjectProtocol)?
+
+  var isSigningIn: Bool {
+    switch signIn {
+    case .waiting, .importing: true
+    case .idle, .failed: false
+    }
+  }
   /// Hosts whose Chrome sign-in was imported; their availability checks no
   /// longer raise the banner (an explicit create/get still does).
   private var importedHosts: Set<String> = []
+
+  /// Sign-in pages get the banner even when they never touch WebAuthn (HubSpot
+  /// asks for a passkey only after the email step): Chrome may already hold a
+  /// session for the site, and the popup carries it over.
+  func paneNavigated(to url: URL?) {
+    guard let url, url.scheme == "https" || url.scheme == "http" else { return }
+    BrowserBridgeTrace.record("pane at \(BrowserPasskeyBridge.redacted(url))")
+    if BrowserPasskeyBridge.isSignInPage(url), passkeyRequestURL == nil {
+      BrowserBridgeTrace.record("banner raised kind=sign-in-page host=\(url.host() ?? "-")")
+      passkeyRequestURL = url
+    }
+  }
 
   func reportPasskey(_ kind: BrowserWebAuthnProbe.Kind, at url: URL?) {
     if kind == .detect, let host = url?.host()?.lowercased(), importedHosts.contains(host) {
@@ -379,6 +395,12 @@ nonisolated enum BrowserPasskeyBridge {
     "\(url.scheme ?? "")://\(url.host() ?? "")\(url.path())"
   }
 
+  /// A page whose path is part of a sign-in flow (`/login`, `/signin`, ...).
+  static func isSignInPage(_ url: URL) -> Bool {
+    let path = url.path().lowercased()
+    return authPathMarkers.contains { path.contains($0) }
+  }
+
   static func isSameSite(_ lhs: URL?, _ rhs: URL?) -> Bool {
     guard let lhs = lhs?.host(), let rhs = rhs?.host() else { return false }
     return !ChromeCookieStore.hostKeys(for: lhs).isDisjoint(
@@ -391,7 +413,7 @@ nonisolated enum BrowserPasskeyBridge {
     guard isSameSite(start, current) else { return false }
     let path = current.path().lowercased()
     guard path != start.path().lowercased() else { return false }
-    return !authPathMarkers.contains { path.contains($0) }
+    return !isSignInPage(current)
   }
 
   static func message(for error: Error) -> String {
@@ -463,6 +485,17 @@ private struct BrowserURLBar: View {
           toolbar.load(text)
           isEditing = false
         }
+      if ChromePopup.isInstalled {
+        Button {
+          toolbar.signInWithChrome()
+        } label: {
+          Label("Sign in with Chrome", systemImage: "person.badge.key")
+            .labelStyle(.iconOnly)
+        }
+        .disabled(toolbar.isSigningIn)
+        .help(
+          "Sign in with Chrome: use Chrome's session, passkeys, and 1Password, then continue here")
+      }
       Button {
         toolbar.openInDefaultBrowser()
       } label: {
@@ -501,7 +534,8 @@ private struct BrowserPasskeyBanner: View {
     HStack(spacing: 8) {
       switch toolbar.signIn {
       case .idle:
-        message("This site uses passkeys, which Supacode's browser can't reach directly.")
+        message(
+          "Sign in through Chrome: its session, passkeys, and 1Password carry over to this page.")
         Spacer(minLength: 8)
         if ChromePopup.isInstalled {
           Button("Sign in with Chrome") { toolbar.signInWithChrome() }
