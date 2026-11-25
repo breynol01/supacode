@@ -244,7 +244,8 @@ private struct BrowserPasskeyBanner: View {
   var body: some View {
     HStack(spacing: 8) {
       Label {
-        Text("This site wants a passkey. Supacode's browser can't use passkeys or 1Password.")
+        Text(
+          "This site uses passkeys, which don't work in Supacode's browser (1Password included).")
       } icon: {
         Image(systemName: "person.badge.key")
       }

@@ -7,6 +7,7 @@ struct BrowserWebAuthnProbeTests {
   @Test func parseAcceptsCreateAndGet() {
     #expect(BrowserWebAuthnProbe.parse(["kind": "create"]) == .create)
     #expect(BrowserWebAuthnProbe.parse(["kind": "get"]) == .get)
+    #expect(BrowserWebAuthnProbe.parse(["kind": "detect"]) == .detect)
   }
 
   @Test func parseRejectsUnexpectedBodies() {
@@ -38,5 +39,13 @@ struct BrowserWebAuthnProbeTests {
     #expect(
       BrowserWebAuthnProbe.source.contains("messageHandlers?.\(BrowserWebAuthnProbe.handlerName)"))
     #expect(BrowserWebAuthnProbe.source.contains(#"options.mediation !== "conditional""#))
+  }
+
+  /// WKWebView answers these checks with `false`, so sites hide passkeys
+  /// without ever calling `create`/`get`; the probe must see the checks.
+  @Test func scriptReportsAvailabilityChecks() {
+    #expect(BrowserWebAuthnProbe.source.contains("isUserVerifyingPlatformAuthenticatorAvailable"))
+    #expect(BrowserWebAuthnProbe.source.contains("isConditionalMediationAvailable"))
+    #expect(BrowserWebAuthnProbe.source.contains(#"report("detect")"#))
   }
 }
