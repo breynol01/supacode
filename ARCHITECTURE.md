@@ -15,6 +15,17 @@ How the fork's features plug into upstream Supacode. For upstream's own architec
   - CLI: `--url` on `tab new` / `pane split`.
   - Menu: "Open Browser in Split" (⌘⇧L), wired through `FocusedAction` `openBrowserSplitAction`.
 
+- **Chrome sign-in bridge** (passkeys, 1Password, existing Chrome sessions):
+  - Why: macOS disables WebAuthn in a third-party `WKWebView` without Apple's restricted `com.apple.developer.web-browser.public-key-credential` entitlement. The availability checks answer `false` and the system passkey sheet never opens.
+  - Trigger: `BrowserWebAuthnProbe` (a document-start user script) reports modal `navigator.credentials` calls and the `PublicKeyCredential` availability checks. `BrowserToolbar.paneNavigated` also flags sign-in pages by path. Either one raises the URL-bar banner; a key button starts the bridge on any page.
+  - Popup: `ChromePopup` opens the page as an app-mode Chrome window (last-used profile) and tracks it through Chrome's AppleScript dictionary. Leaving the sign-in path on the same site, closing the popup, or clicking Done finishes the sign-in.
+  - Import: `ChromeCookieStore` copies the profile's `Cookies` SQLite (with WAL) and decrypts `v10` values with the "Chrome Safe Storage" Keychain key (schema 24+ strips a 32-byte host digest). The cookies go into the pane's `httpCookieStore`, then the pane reloads.
+  - Settle rule: Chrome writes cookies to disk late (2–30s). The import waits for a row written after the popup's last navigation, or for a 33s write-back window when nothing new was pending (`BrowserPasskeyBridge.isSettled`).
+  - A `userInitiated` activity holds off App Nap during a sign-in.
+  - QA: every step is traced to `~/Library/Logs/Supacode/browser-bridge.log` (`BrowserBridgeTrace`; no cookie values; skipped in the test host).
+    - `scripts/browser-bridge/diagnose.sh <host>` shows the trace next to Chrome's and the pane's cookies.
+    - `scripts/browser-bridge/run-harness.sh` drives real Chrome against a local fake site; `run-harness.sh popup <url>` traces a real site's popup redirects.
+
 ## Background-work indicator (`fork/background-work`)
 - **Signal:** `BackgroundWorkProbe` (`Features/AgentPresence/BusinessLogic/`).
   - Lists `claude` processes and reads `SUPACODE_SURFACE_ID` from their environment (`KERN_PROCARGS2`).
