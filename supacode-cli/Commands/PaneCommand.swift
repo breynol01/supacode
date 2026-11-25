@@ -104,6 +104,11 @@ extension PaneCommand {
     @Option(name: [.short, .long], help: "Split direction: horizontal (h) or vertical (v).")
     var direction: CLISplitDirection?
 
+    @Option(
+      name: .customLong("url"),
+      help: "Open a browser at this URL instead of a terminal (empty opens a blank page).")
+    var browserURL: String?
+
     @Option(name: [.short, .customLong("id")], help: "UUID for the new tab.")
     var newID: String?
 
@@ -113,6 +118,9 @@ extension PaneCommand {
 
     func validate() throws {
       try IDResolvers.validateNewID(newID)
+      if input != nil, browserURL != nil {
+        throw ValidationError("--input and --url are mutually exclusive.")
+      }
     }
 
     func run() throws {
@@ -124,7 +132,7 @@ extension PaneCommand {
           to: DeeplinkURLBuilder.paneSplit(
             worktreeID: wID,
             paneToken: token,
-            options: .init(direction: direction?.rawValue, input: input, id: resolvedID)
+            options: .init(direction: direction?.rawValue, input: input, id: resolvedID, browserURL: browserURL)
           )),
         timeoutSeconds: timeoutOption.timeout
       )
