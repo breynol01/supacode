@@ -1,6 +1,7 @@
 """Fake sign-in site for the bridge harness.
 
-/login  sets `harness_session` (persistent, HttpOnly) and redirects to /home after a second.
+/login  sets `harness_session` (persistent, HttpOnly) and redirects to /home after a second;
+        with a session already present it redirects at once and sets nothing.
 /home   the signed-in page.
 /whoami echoes the Cookie header the client sent.
 """
@@ -12,7 +13,13 @@ import uuid
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/login"):
+        signed_in = "harness_session=" in self.headers.get("Cookie", "")
+        if self.path.startswith("/login") and signed_in:
+            # Already signed in: straight to /home, no new cookie (like GitHub).
+            body = b""
+            self.send_response(302)
+            self.send_header("Location", "/home")
+        elif self.path.startswith("/login"):
             body = b'<!doctype html><title>login</title><meta http-equiv="refresh" content="1;url=/home">signing in'
             self.send_response(200)
             self.send_header(

@@ -42,30 +42,33 @@ enum Harness {
       return 1
     }
     print("ok   signed-in page seen after \(elapsed(opened))")
+    // Same rule as BrowserPasskeyBridge.isSettled: a fresh row, or a full
+    // write-back period (an already signed-in profile writes nothing new).
     let threshold = ChromeCookieStore.chromeTime(from: signedInAt.addingTimeInterval(-3))
-    let deadline = Date.now.addingTimeInterval(60)
-    var flushedAt: Date?
-    while Date.now < deadline {
+    let window33: TimeInterval = 33
+    var settledBy: String?
+    var hasSession = false
+    while settledBy == nil {
       do {
         let rows = try ChromeCookieStore.rows(forHosts: hosts, profile: profile, decrypting: false)
-        let session = rows.first { $0.name == "harness_session" }
-        if let session, session.lastUpdateUTC >= threshold {
-          flushedAt = .now
-          break
+        hasSession = rows.contains { $0.name == "harness_session" }
+        if rows.contains(where: { $0.lastUpdateUTC >= threshold }) {
+          settledBy = "fresh write"
+        } else if Date.now.timeIntervalSince(signedInAt) >= window33 {
+          settledBy = "write-back window"
         }
       } catch {
         print("FAIL cookie read: \(error)")
         return 1
       }
-      try? await Task.sleep(for: .seconds(1))
+      if settledBy == nil { try? await Task.sleep(for: .seconds(1)) }
     }
-    guard let flushedAt else {
-      print("FAIL Chrome never persisted harness_session within 60s")
+    let waited = String(format: "%.1fs", Date.now.timeIntervalSince(signedInAt))
+    guard hasSession else {
+      print("FAIL settled by \(settledBy!) after \(waited) but harness_session is not on disk")
       return 1
     }
-    print(
-      "ok   Chrome persisted the session \(String(format: "%.1fs", flushedAt.timeIntervalSince(signedInAt))) after sign-in"
-    )
+    print("ok   settled by \(settledBy!) after \(waited); harness_session on disk")
     ChromePopup.close(window: window)
     try? await Task.sleep(for: .seconds(1))
     let gone = ChromePopup.currentURL(ofWindow: window).map { $0 == nil } ?? false

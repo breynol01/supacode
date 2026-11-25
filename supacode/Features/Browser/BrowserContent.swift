@@ -164,7 +164,27 @@ final class BrowserToolbar: TabContentToolbar {
     case failed(String)
   }
 
-  var signIn: SignIn = .idle
+  var signIn: SignIn = .idle {
+    didSet {
+      guard signIn != oldValue else { return }
+      BrowserBridgeTrace.record("state \(BrowserPasskeyBridge.describe(signIn))")
+      // Supacode sits in the background while the popup is up; App Nap would
+      // stretch the 1s polls to 10s+, so opt out while a sign-in is running.
+      let busy =
+        switch signIn {
+        case .waiting, .importing: true
+        case .idle, .failed: false
+        }
+      if busy, napActivity == nil {
+        napActivity = ProcessInfo.processInfo.beginActivity(
+          options: [.userInitiated], reason: "Browser pane passkey sign-in")
+      } else if !busy, let activity = napActivity {
+        ProcessInfo.processInfo.endActivity(activity)
+        napActivity = nil
+      }
+    }
+  }
+  private var napActivity: (any NSObjectProtocol)?
   /// Hosts whose Chrome sign-in was imported; their availability checks no
   /// longer raise the banner (an explicit create/get still does).
   private var importedHosts: Set<String> = []
@@ -263,9 +283,10 @@ final class BrowserToolbar: TabContentToolbar {
       hosts.formUnion(ChromeCookieStore.hostKeys(for: popupHost))
     }
     // Chrome persists cookie changes in batches, so wait until its file holds
-    // a write from after the popup's last navigation (the signed-in page).
-    let threshold = ChromeCookieStore.chromeTime(from: popupNavigatedAt.addingTimeInterval(-3))
-    let deadline = Date.now.addingTimeInterval(BrowserPasskeyBridge.flushTimeout)
+    // a write from after the popup's last navigation (the signed-in page), or
+    // until a full write-back period has passed since then (nothing was pending).
+    let landedAt = popupNavigatedAt
+    let threshold = ChromeCookieStore.chromeTime(from: landedAt.addingTimeInterval(-3))
     var rows: [ChromeCookieStore.Row] = []
     while true {
       let result = await Task.detached { [hosts] in
@@ -279,14 +300,11 @@ final class BrowserToolbar: TabContentToolbar {
       case .success(let read):
         rows = read
       }
-      let flushed = BrowserPasskeyBridge.isFlushed(rows, after: threshold)
+      let settled = BrowserPasskeyBridge.isSettled(rows, after: threshold, landedAt: landedAt)
       BrowserBridgeTrace.record(
-        "chrome rows=\(rows.count) flushed=\(flushed) newest=\(BrowserPasskeyBridge.newest(rows))")
-      if flushed { break }
-      guard Date.now < deadline, !Task.isCancelled else {
-        signIn = .failed("Chrome hasn't saved the sign-in yet. Click Try Again in a few seconds.")
-        return
-      }
+        "chrome rows=\(rows.count) settled=\(settled) newest=\(BrowserPasskeyBridge.newest(rows))")
+      if settled { break }
+      guard !Task.isCancelled else { return }
       try? await Task.sleep(for: .seconds(1.5))
     }
     let cookies = rows.compactMap { ChromeCookieStore.cookie(from: $0) }
@@ -321,16 +339,32 @@ final class BrowserToolbar: TabContentToolbar {
 
 /// Pure decisions behind the Chrome sign-in bridge.
 nonisolated enum BrowserPasskeyBridge {
+  static func describe(_ state: BrowserToolbar.SignIn) -> String {
+    switch state {
+    case .idle: "idle"
+    case .waiting(_, let window): "waiting popup=\(window.map(String.init) ?? "-")"
+    case .importing: "importing"
+    case .failed(let reason): "failed: \(reason)"
+    }
+  }
+
   private static let authPathMarkers = [
     "login", "logon", "signin", "sign-in", "sign_in", "session", "auth", "sso", "saml",
     "two-factor", "2fa", "mfa", "webauthn", "passkey", "challenge", "verify", "consent",
   ]
 
-  /// How long to wait for Chrome to write a fresh sign-in to disk.
-  static let flushTimeout: TimeInterval = 45
+  /// Chrome's cookie write-back period (30s) plus slack. Once this much time
+  /// has passed since the signed-in page, everything Chrome held then is on disk.
+  static let writeBackWindow: TimeInterval = 33
 
-  static func isFlushed(_ rows: [ChromeCookieStore.Row], after threshold: Int64) -> Bool {
+  /// Chrome's file reflects the sign-in: it holds a write from after the
+  /// signed-in page, or a full write-back period has passed (an already
+  /// signed-in profile may write nothing new).
+  static func isSettled(
+    _ rows: [ChromeCookieStore.Row], after threshold: Int64, landedAt: Date, now: Date = .now
+  ) -> Bool {
     rows.contains { $0.lastUpdateUTC >= threshold }
+      || now.timeIntervalSince(landedAt) >= writeBackWindow
   }
 
   static func newest(_ rows: [ChromeCookieStore.Row]) -> String {

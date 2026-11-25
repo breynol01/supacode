@@ -90,15 +90,19 @@ struct ChromeCookieBridgeTests {
   }
 
   /// Chrome writes cookies to disk in batches; the import must wait for a row
-  /// written after the popup's signed-in page, not take what is on disk.
-  @Test func flushNeedsARowFromAfterTheThreshold() {
+  /// written after the popup's signed-in page, or a full write-back period.
+  @Test func settledNeedsAFreshRowOrAFullWriteBackPeriod() {
+    let landed = Date(timeIntervalSince1970: 1_000)
     var row = ChromeCookieStore.Row(
       hostKey: "github.com", name: "user_session", value: "", path: "/", expiresUTC: 0,
       hasExpires: false, isSecure: true, isHTTPOnly: true, sameSite: 1, lastUpdateUTC: 100)
-    #expect(!BrowserPasskeyBridge.isFlushed([row], after: 200))
+    let soon = landed.addingTimeInterval(5)
+    #expect(!BrowserPasskeyBridge.isSettled([row], after: 200, landedAt: landed, now: soon))
     row.lastUpdateUTC = 200
-    #expect(BrowserPasskeyBridge.isFlushed([row], after: 200))
-    #expect(!BrowserPasskeyBridge.isFlushed([], after: 0))
+    #expect(BrowserPasskeyBridge.isSettled([row], after: 200, landedAt: landed, now: soon))
+    // An already signed-in profile writes nothing new; the period elapsing settles it.
+    let later = landed.addingTimeInterval(BrowserPasskeyBridge.writeBackWindow)
+    #expect(BrowserPasskeyBridge.isSettled([], after: 200, landedAt: landed, now: later))
   }
 
   @Test func redactedURLDropsQueryAndFragment() throws {
