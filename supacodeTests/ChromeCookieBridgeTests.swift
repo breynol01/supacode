@@ -88,4 +88,21 @@ struct ChromeCookieBridgeTests {
     toolbar.reportPasskey(.detect, at: url)
     #expect(toolbar.passkeyRequestURL == url)
   }
+
+  /// Chrome writes cookies to disk in batches; the import must wait for a row
+  /// written after the popup's signed-in page, not take what is on disk.
+  @Test func flushNeedsARowFromAfterTheThreshold() {
+    var row = ChromeCookieStore.Row(
+      hostKey: "github.com", name: "user_session", value: "", path: "/", expiresUTC: 0,
+      hasExpires: false, isSecure: true, isHTTPOnly: true, sameSite: 1, lastUpdateUTC: 100)
+    #expect(!BrowserPasskeyBridge.isFlushed([row], after: 200))
+    row.lastUpdateUTC = 200
+    #expect(BrowserPasskeyBridge.isFlushed([row], after: 200))
+    #expect(!BrowserPasskeyBridge.isFlushed([], after: 0))
+  }
+
+  @Test func redactedURLDropsQueryAndFragment() throws {
+    let url = try #require(URL(string: "https://github.com/login/oauth?code=secret#frag"))
+    #expect(BrowserPasskeyBridge.redacted(url) == "https://github.com/login/oauth")
+  }
 }

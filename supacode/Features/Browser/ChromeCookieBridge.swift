@@ -52,6 +52,10 @@ nonisolated enum ChromeCookieStore {
     return Date(timeIntervalSince1970: Double(value) / 1_000_000 - 11_644_473_600)
   }
 
+  static func chromeTime(from date: Date) -> Int64 {
+    Int64((date.timeIntervalSince1970 + 11_644_473_600) * 1_000_000)
+  }
+
   static func deriveKey(password: Data) -> Data {
     var key = Data(count: kCCKeySizeAES128)
     let salt = Data("saltysalt".utf8)
@@ -115,6 +119,7 @@ nonisolated enum ChromeCookieStore {
     var isHTTPOnly: Bool
     /// -1 unspecified, 0 none, 1 lax, 2 strict.
     var sameSite: Int
+    var lastUpdateUTC: Int64 = 0
   }
 
   static func cookie(from row: Row, now: Date = .now) -> HTTPCookie? {
@@ -161,14 +166,23 @@ nonisolated enum ChromeCookieStore {
     return key
   }
 
-  /// Every unexpired cookie Chrome holds for `hosts` in `profile`. The live
-  /// database is locked by Chrome, so it is copied (with its WAL) first.
+  /// Every unexpired cookie Chrome holds for `hosts` in `profile`.
   static func cookies(forHosts hosts: Set<String>, profile: String) throws -> [HTTPCookie] {
+    try rows(forHosts: hosts, profile: profile).compactMap { cookie(from: $0) }
+  }
+
+  /// Chrome's persisted rows for `hosts`. Chrome writes cookie changes to disk
+  /// in batches (roughly every 30 seconds), so a fresh sign-in can be missing
+  /// here for a while; callers wait on `lastUpdateUTC`. The live database is
+  /// locked by Chrome, so it is copied (with its WAL) first.
+  static func rows(forHosts hosts: Set<String>, profile: String, decrypting: Bool = true) throws
+    -> [Row]
+  {
     let source = supportDirectory.appending(path: profile).appending(path: "Cookies")
     guard FileManager.default.fileExists(atPath: source.path(percentEncoded: false)) else {
       throw Failure.cookieFileMissing
     }
-    let key = try storageKey()
+    let key = decrypting ? try storageKey() : nil
     let scratch = URL.temporaryDirectory.appending(path: "supacode-chrome-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
@@ -181,10 +195,10 @@ nonisolated enum ChromeCookieStore {
           at: sidecar, to: URL(filePath: copy.path(percentEncoded: false) + suffix))
       }
     }
-    return try readRows(at: copy, hosts: hosts, key: key).compactMap { cookie(from: $0) }
+    return try readRows(at: copy, hosts: hosts, key: key)
   }
 
-  private static func readRows(at url: URL, hosts: Set<String>, key: Data) throws -> [Row] {
+  private static func readRows(at url: URL, hosts: Set<String>, key: Data?) throws -> [Row] {
     var database: OpaquePointer?
     guard
       sqlite3_open_v2(url.path(percentEncoded: false), &database, SQLITE_OPEN_READWRITE, nil)
@@ -199,7 +213,7 @@ nonisolated enum ChromeCookieStore {
     let placeholders = Array(repeating: "?", count: hosts.count).joined(separator: ",")
     let sql = """
       SELECT host_key, name, value, encrypted_value, path, expires_utc, has_expires,
-        is_secure, is_httponly, samesite
+        is_secure, is_httponly, samesite, last_update_utc
       FROM cookies WHERE host_key IN (\(placeholders))
       """
     var statement: OpaquePointer?
@@ -217,7 +231,7 @@ nonisolated enum ChromeCookieStore {
       var value = text(statement, 2)
       if let blob = sqlite3_column_blob(statement, 3) {
         let encrypted = Data(bytes: blob, count: Int(sqlite3_column_bytes(statement, 3)))
-        if !encrypted.isEmpty {
+        if !encrypted.isEmpty, let key {
           guard let decrypted = decrypt(encrypted, key: key, schemaVersion: schemaVersion) else {
             continue
           }
@@ -231,7 +245,8 @@ nonisolated enum ChromeCookieStore {
           hasExpires: sqlite3_column_int(statement, 6) != 0,
           isSecure: sqlite3_column_int(statement, 7) != 0,
           isHTTPOnly: sqlite3_column_int(statement, 8) != 0,
-          sameSite: Int(sqlite3_column_int(statement, 9))))
+          sameSite: Int(sqlite3_column_int(statement, 9)),
+          lastUpdateUTC: sqlite3_column_int64(statement, 10)))
     }
     return rows
   }

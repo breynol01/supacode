@@ -173,9 +173,15 @@ final class BrowserToolbar: TabContentToolbar {
     if kind == .detect, let host = url?.host()?.lowercased(), importedHosts.contains(host) {
       return
     }
+    if passkeyRequestURL == nil {
+      BrowserBridgeTrace.record("banner raised kind=\(kind.rawValue) host=\(url?.host() ?? "-")")
+    }
     passkeyRequestURL = url
   }
   private var popupURL: URL?
+  /// When the popup last changed page; Chrome's cookie write-back for the
+  /// sign-in lands after this.
+  private var popupNavigatedAt = Date.distantPast
   private var signInTask: Task<Void, Never>?
 
   /// Opens the page in a small Chrome app window where 1Password and the
@@ -184,10 +190,15 @@ final class BrowserToolbar: TabContentToolbar {
     guard let start = passkeyRequestURL ?? webView?.url ?? currentURL else { return }
     signInTask?.cancel()
     popupURL = nil
+    popupNavigatedAt = .now
     signIn = .waiting(start: start, popupWindow: nil)
     let profile = ChromeCookieStore.lastUsedProfile()
+    BrowserBridgeTrace.record(
+      "sign-in start url=\(BrowserPasskeyBridge.redacted(start)) profile=\(profile)")
     signInTask = Task { [weak self] in
       let window = await ChromePopup.open(start, profile: profile)
+      BrowserBridgeTrace.record(
+        "popup opened window=\(window.map(String.init) ?? "unidentified (no Automation access?)")")
       guard let self, !Task.isCancelled, case .waiting = self.signIn else { return }
       self.signIn = .waiting(start: start, popupWindow: window)
       guard let window else { return }
@@ -204,13 +215,19 @@ final class BrowserToolbar: TabContentToolbar {
       guard case .waiting = signIn else { return }
       guard let lookup = ChromePopup.currentURL(ofWindow: window) else { continue }
       guard let url = lookup else {
+        BrowserBridgeTrace.record("popup closed by user")
         await importCookies(start: start, profile: profile, closing: nil)
         return
+      }
+      if url != popupURL {
+        popupNavigatedAt = .now
+        BrowserBridgeTrace.record("popup at \(BrowserPasskeyBridge.redacted(url))")
       }
       popupURL = url
       if BrowserPasskeyBridge.looksSignedIn(start: start, current: url) {
         // One more tick on the same URL rides out redirect chains.
         if settledURL == url {
+          BrowserBridgeTrace.record("popup looks signed in")
           await importCookies(start: start, profile: profile, closing: window)
           return
         }
@@ -224,6 +241,7 @@ final class BrowserToolbar: TabContentToolbar {
   /// "Done" in the banner: import now, whatever the popup shows.
   func finishSignIn() {
     guard case .waiting(let start, let window) = signIn else { return }
+    BrowserBridgeTrace.record("done clicked")
     signInTask?.cancel()
     let profile = ChromeCookieStore.lastUsedProfile()
     signInTask = Task { [weak self] in
@@ -232,6 +250,7 @@ final class BrowserToolbar: TabContentToolbar {
   }
 
   func cancelSignIn() {
+    if signIn != .idle { BrowserBridgeTrace.record("sign-in cancelled") }
     signInTask?.cancel()
     signInTask = nil
     signIn = .idle
@@ -243,33 +262,60 @@ final class BrowserToolbar: TabContentToolbar {
     if let popupHost = popupURL?.host(), BrowserPasskeyBridge.isSameSite(start, popupURL) {
       hosts.formUnion(ChromeCookieStore.hostKeys(for: popupHost))
     }
-    let result = await Task.detached { [hosts] in
-      Result { try ChromeCookieStore.cookies(forHosts: hosts, profile: profile) }
-    }.value
-    switch result {
-    case .failure(let error):
-      signIn = .failed(BrowserPasskeyBridge.message(for: error))
-    case .success(let cookies) where cookies.isEmpty:
-      signIn = .failed(
-        "Chrome has no sign-in for \(start.host() ?? "this site") yet. Finish signing in there.")
-    case .success(let cookies):
-      guard let webView else {
-        signIn = .idle
+    // Chrome persists cookie changes in batches, so wait until its file holds
+    // a write from after the popup's last navigation (the signed-in page).
+    let threshold = ChromeCookieStore.chromeTime(from: popupNavigatedAt.addingTimeInterval(-3))
+    let deadline = Date.now.addingTimeInterval(BrowserPasskeyBridge.flushTimeout)
+    var rows: [ChromeCookieStore.Row] = []
+    while true {
+      let result = await Task.detached { [hosts] in
+        Result { try ChromeCookieStore.rows(forHosts: hosts, profile: profile) }
+      }.value
+      switch result {
+      case .failure(let error):
+        BrowserBridgeTrace.record("cookie read failed: \(error)")
+        signIn = .failed(BrowserPasskeyBridge.message(for: error))
+        return
+      case .success(let read):
+        rows = read
+      }
+      let flushed = BrowserPasskeyBridge.isFlushed(rows, after: threshold)
+      BrowserBridgeTrace.record(
+        "chrome rows=\(rows.count) flushed=\(flushed) newest=\(BrowserPasskeyBridge.newest(rows))")
+      if flushed { break }
+      guard Date.now < deadline, !Task.isCancelled else {
+        signIn = .failed("Chrome hasn't saved the sign-in yet. Click Try Again in a few seconds.")
         return
       }
-      let store = webView.configuration.websiteDataStore.httpCookieStore
-      for cookie in cookies {
-        await store.setCookie(cookie)
-      }
-      if let window { ChromePopup.close(window: window) }
-      let destination = BrowserPasskeyBridge.isSameSite(start, popupURL) ? popupURL ?? start : start
-      webView.load(URLRequest(url: destination))
-      importedHosts.insert((start.host() ?? "").lowercased())
-      if let host = destination.host() { importedHosts.insert(host.lowercased()) }
-      passkeyRequestURL = nil
-      signIn = .idle
-      NSApp.activate()
+      try? await Task.sleep(for: .seconds(1.5))
     }
+    let cookies = rows.compactMap { ChromeCookieStore.cookie(from: $0) }
+    BrowserBridgeTrace.record(
+      "importing \(cookies.count) cookies: \(cookies.map(\.name).sorted().joined(separator: ","))")
+    guard !cookies.isEmpty else {
+      signIn = .failed(
+        "Chrome has no sign-in for \(start.host() ?? "this site") yet. Finish signing in there.")
+      return
+    }
+    guard let webView else {
+      signIn = .idle
+      return
+    }
+    let store = webView.configuration.websiteDataStore.httpCookieStore
+    for cookie in cookies {
+      await store.setCookie(cookie)
+    }
+    let stored = await store.allCookies().filter { hosts.contains($0.domain.lowercased()) }
+    BrowserBridgeTrace.record("pane now holds \(stored.count) cookies for the site")
+    if let window { ChromePopup.close(window: window) }
+    let destination = BrowserPasskeyBridge.isSameSite(start, popupURL) ? popupURL ?? start : start
+    BrowserBridgeTrace.record("reloading pane at \(BrowserPasskeyBridge.redacted(destination))")
+    webView.load(URLRequest(url: destination))
+    importedHosts.insert((start.host() ?? "").lowercased())
+    if let host = destination.host() { importedHosts.insert(host.lowercased()) }
+    passkeyRequestURL = nil
+    signIn = .idle
+    NSApp.activate()
   }
 }
 
@@ -279,6 +325,25 @@ nonisolated enum BrowserPasskeyBridge {
     "login", "logon", "signin", "sign-in", "sign_in", "session", "auth", "sso", "saml",
     "two-factor", "2fa", "mfa", "webauthn", "passkey", "challenge", "verify", "consent",
   ]
+
+  /// How long to wait for Chrome to write a fresh sign-in to disk.
+  static let flushTimeout: TimeInterval = 45
+
+  static func isFlushed(_ rows: [ChromeCookieStore.Row], after threshold: Int64) -> Bool {
+    rows.contains { $0.lastUpdateUTC >= threshold }
+  }
+
+  static func newest(_ rows: [ChromeCookieStore.Row]) -> String {
+    guard let latest = rows.map(\.lastUpdateUTC).max(),
+      let date = ChromeCookieStore.date(fromChromeTime: latest)
+    else { return "-" }
+    return date.formatted(.iso8601.time(includingFractionalSeconds: false))
+  }
+
+  /// Scheme, host and path only: queries can carry tokens.
+  static func redacted(_ url: URL) -> String {
+    "\(url.scheme ?? "")://\(url.host() ?? "")\(url.path())"
+  }
 
   static func isSameSite(_ lhs: URL?, _ rhs: URL?) -> Bool {
     guard let lhs = lhs?.host(), let rhs = rhs?.host() else { return false }
@@ -423,7 +488,7 @@ private struct BrowserPasskeyBanner: View {
         dismissButton { toolbar.cancelSignIn() }
       case .importing:
         ProgressView().controlSize(.small)
-        message("Bringing your sign-in over from Chrome…")
+        message("Waiting for Chrome to save your sign-in, then bringing it over…")
         Spacer(minLength: 8)
       case .failed(let reason):
         message(reason)
