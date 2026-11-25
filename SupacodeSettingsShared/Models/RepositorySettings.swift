@@ -4,8 +4,9 @@ public nonisolated struct RepositorySettings: Codable, Equatable, Sendable {
   public var setupScript: String
   public var archiveScript: String
   public var deleteScript: String
-  /// Runs when a File Explorer file is opened, with its path in `SUPACODE_FILE_PATH`. Empty
-  /// inherits the global script, then the system default app. A hook, never in the script menu.
+  /// Runs when a File Explorer file is opened, with its path in `SUPACODE_FILE_PATH`; a terminal
+  /// `path:line` click adds `SUPACODE_FILE_LINE`. Empty inherits the global script, then the system
+  /// default app. A hook, never in the script menu.
   public var openFileScript: String
   /// Legacy field kept for backward-compatible JSON serialization.
   /// New code should use `scripts` instead. On encode, this is

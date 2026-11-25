@@ -26,6 +26,43 @@ struct AppFeatureOpenFileTests {
     #expect(input == "export SUPACODE_FILE_PATH='/tmp/o'\"'\"'brien.txt'; code")
   }
 
+  @Test func openFileCommandInputExportsLineWhenPresent() {
+    let input = AppFeature.openFileCommandInput(
+      script: "vim +\"$SUPACODE_FILE_LINE\" \"$SUPACODE_FILE_PATH\"",
+      fileURL: URL(fileURLWithPath: "/tmp/repo/main.swift"),
+      line: 42
+    )
+    #expect(
+      input
+        == "export SUPACODE_FILE_PATH='/tmp/repo/main.swift'; export SUPACODE_FILE_LINE=42; "
+        + "vim +\"$SUPACODE_FILE_LINE\" \"$SUPACODE_FILE_PATH\"")
+  }
+
+  @Test(.dependencies) func openFileFromTerminalWithoutScriptOpensSystemDefaultApp() async {
+    let worktree = makeWorktree()
+    let opened = LockIsolated<[URL]>([])
+    let store = TestStore(
+      initialState: AppFeature.State(
+        repositories: makeRepositoriesState(worktree: worktree),
+        settings: SettingsFeature.State()
+      )
+    ) {
+      AppFeature()
+    } withDependencies: {
+      $0.workspaceClient.openFile = { url, _ in
+        opened.withValue { $0.append(url) }
+        return nil
+      }
+    }
+    store.exhaustivity = .off
+
+    let fileURL = URL(fileURLWithPath: "/tmp/repo/wt-1/main.swift")
+    await store.send(.openFileFromTerminal(fileURL, line: 7, worktreeID: worktree.id))
+    await store.finish()
+
+    #expect(opened.value == [fileURL])
+  }
+
   @Test(.dependencies) func openFileWithoutScriptOpensSystemDefaultApp() async {
     let worktree = makeWorktree()
     let openedWith = LockIsolated<[OpenWorktreeAction?]>([])

@@ -317,6 +317,8 @@ struct AppFeature {
     case openFile(URL, with: OpenWorktreeAction?)
     /// A File Explorer file was double-clicked: run the open-file script, else the system app.
     case openFileFromExplorer(URL)
+    /// A file reference was cmd-clicked in a terminal: same hook as the explorer, plus the line.
+    case openFileFromTerminal(URL, line: Int?, worktreeID: Worktree.ID)
     case requestQuit
     case requestTerminateAllTerminalSessions
     case newTerminal
@@ -972,19 +974,11 @@ struct AppFeature {
         }
 
       case .openFileFromExplorer(let fileURL):
-        // No script (or no/remote worktree): open with the system default app.
-        let openWithDefaultApp = Effect<Action>.run { @MainActor send in
-          guard let error = await workspaceClient.openFile(fileURL, nil) else { return }
-          send(.openWorktreeFailed(error))
-        }
-        // Explorer is local-only; the host guard keeps a script off a remote path defensively.
-        guard let worktree = state.repositories.worktree(for: state.repositories.selectedWorktreeID),
-          worktree.host == nil
-        else { return openWithDefaultApp }
-        let script = resolveOpenFileScript(in: worktree)
-        guard !script.isEmpty else { return openWithDefaultApp }
-        let input = Self.openFileCommandInput(script: script, fileURL: fileURL)
-        return .run { _ in await terminalClient.send(.openFileWithScript(worktree, input: input)) }
+        return openFileWithHook(
+          fileURL, line: nil, worktree: state.repositories.worktree(for: state.repositories.selectedWorktreeID))
+
+      case .openFileFromTerminal(let fileURL, let line, let worktreeID):
+        return openFileWithHook(fileURL, line: line, worktree: state.repositories.worktree(for: worktreeID))
 
       case .openWorktreeFailed(let error):
         state.alert = AlertState {
@@ -3337,10 +3331,27 @@ struct AppFeature {
     return global.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : global
   }
 
-  /// The script with the file's path exported as `SUPACODE_FILE_PATH`, quoted so it stays literal.
-  static func openFileCommandInput(script: String, fileURL: URL) -> String {
+  /// Runs the open-file script in `worktree`, else opens with the system default app
+  /// (no script, or no or remote worktree).
+  private func openFileWithHook(_ fileURL: URL, line: Int?, worktree: Worktree?) -> Effect<Action> {
+    let openWithDefaultApp = Effect<Action>.run { @MainActor send in
+      guard let error = await workspaceClient.openFile(fileURL, nil) else { return }
+      send(.openWorktreeFailed(error))
+    }
+    // Local-only; the host guard keeps a script off a remote path defensively.
+    guard let worktree, worktree.host == nil else { return openWithDefaultApp }
+    let script = resolveOpenFileScript(in: worktree)
+    guard !script.isEmpty else { return openWithDefaultApp }
+    let input = Self.openFileCommandInput(script: script, fileURL: fileURL, line: line)
+    return .run { _ in await terminalClient.send(.openFileWithScript(worktree, input: input)) }
+  }
+
+  /// The script with the file's path exported as `SUPACODE_FILE_PATH`, quoted so it stays literal,
+  /// and `SUPACODE_FILE_LINE` when the click came from a `path:line` reference.
+  static func openFileCommandInput(script: String, fileURL: URL, line: Int? = nil) -> String {
     let quotedPath = BlockingScriptRunner.shellSingleQuoted(fileURL.path(percentEncoded: false))
-    return "export SUPACODE_FILE_PATH=\(quotedPath); \(script)"
+    let lineExport = line.map { " export SUPACODE_FILE_LINE=\($0);" } ?? ""
+    return "export SUPACODE_FILE_PATH=\(quotedPath);\(lineExport) \(script)"
   }
 
   private func scriptAlert(title: String, message: String) -> AlertState<Alert> {
